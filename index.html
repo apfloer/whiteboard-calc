@@ -1,0 +1,2953 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+  <meta name="description" content="Interactive touchscreen whiteboard with live spreadsheet calculations, 128 Excel-compatible formulas, freehand drawing, and .xlsx import/export.">
+  <meta property="og:title" content="Whiteboard + Calc">
+  <meta property="og:description" content="Live calculation workspace — draw, annotate, and calculate together.">
+  <meta name="theme-color" content="#1a6ef5">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='20' fill='%231a6ef5'/><text y='.9em' font-size='80' x='10'>📊</text></svg>">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>Whiteboard — Calc Workspace</title>
+<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js"></script>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --bg:#f5f5f3;
+  --surface:#ffffff;
+  --surface2:#f9f9f8;
+  --border:#e2e2de;
+  --border2:#ccccc8;
+  --text:#1a1a18;
+  --text2:#666662;
+  --text3:#999996;
+  --blue:#1a6ef5;
+  --blue-bg:#eff5ff;
+  --blue-border:#93b9f9;
+  --red:#d63b3b;
+  --green:#16a34a;
+  --amber:#d97706;
+  --purple:#7c3aed;
+  --cell-sel:#dbeafe;
+  --cell-sel-border:#1a6ef5;
+  --header-bg:#f1f1ef;
+  --row-alt:#fafaf8;
+  --toolbar-h:48px;
+  --statusbar-h:28px;
+}
+@media(prefers-color-scheme:dark){
+  :root{
+    --bg:#1c1c1a;
+    --surface:#252523;
+    --surface2:#2e2e2b;
+    --border:#3a3a36;
+    --border2:#4a4a46;
+    --text:#f0f0ec;
+    --text2:#9a9a96;
+    --text3:#666662;
+    --blue:#4d8ef5;
+    --blue-bg:#1a2540;
+    --blue-border:#2a4a80;
+    --cell-sel:#1a2e50;
+    --cell-sel-border:#4d8ef5;
+    --header-bg:#2a2a27;
+    --row-alt:#262624;
+  }
+}
+html,body{height:100%;overflow:hidden;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',system-ui,sans-serif;background:var(--bg);color:var(--text);font-size:13px}
+
+/* ── TOOLBAR ── */
+#toolbar{
+  position:fixed;top:0;left:0;right:0;height:var(--toolbar-h);
+  background:var(--surface);border-bottom:1px solid var(--border);
+  display:flex;align-items:center;gap:2px;padding:0 10px;z-index:100;
+  touch-action:none;
+}
+.tb-group{display:flex;align-items:center;gap:2px}
+.tb-sep{width:1px;height:22px;background:var(--border);margin:0 6px;flex-shrink:0}
+.tb-btn{
+  display:flex;align-items:center;gap:5px;
+  background:none;border:1px solid transparent;border-radius:7px;
+  padding:5px 9px;cursor:pointer;font-size:12px;color:var(--text2);
+  white-space:nowrap;transition:background .1s,border-color .1s;
+  -webkit-tap-highlight-color:transparent;
+}
+.tb-btn:hover{background:var(--surface2);border-color:var(--border)}
+.tb-btn.active{background:var(--blue-bg);color:var(--blue);border-color:var(--blue-border)}
+.tb-btn.danger{color:var(--red)}
+.tb-btn svg{flex-shrink:0}
+.tb-btn .label{display:inline}
+@media(max-width:700px){.tb-btn .label{display:none}}
+#color-swatches{display:flex;gap:4px;align-items:center}
+.swatch{width:18px;height:18px;border-radius:50%;cursor:pointer;border:2px solid transparent;transition:border-color .1s;flex-shrink:0}
+.swatch.active{border-color:var(--text)}
+#size-slider{width:60px;accent-color:var(--blue)}
+.tb-spacer{flex:1}
+#app-title{font-size:13px;font-weight:600;color:var(--text);letter-spacing:-.01em;margin-right:4px}
+
+/* ── CANVAS AREA ── */
+#canvas-area{
+  position:fixed;
+  top:var(--toolbar-h);left:0;right:0;
+  bottom:var(--statusbar-h);
+  overflow:hidden;touch-action:none;
+}
+#whiteboard-canvas{
+  position:absolute;top:0;left:0;
+  background:transparent;
+  pointer-events:none;z-index:20;
+}
+#wb-bg{
+  position:absolute;top:0;left:0;width:100%;height:100%;
+  background:var(--surface);
+  background-image:
+    linear-gradient(var(--border) 1px,transparent 1px),
+    linear-gradient(90deg,var(--border) 1px,transparent 1px);
+  background-size:32px 32px;
+  background-position:0 0;
+}
+#wb-bg.no-grid{background-image:none}
+
+/* ── SPREADSHEET OBJECTS ── */
+.sheet-obj{
+  position:absolute;
+  background:var(--surface);
+  border:1.5px solid var(--border2);
+  border-radius:10px;
+  overflow:hidden;
+  z-index:10;
+  min-width:320px;min-height:200px;
+  display:flex;flex-direction:column;
+  box-shadow:0 2px 12px rgba(0,0,0,.08);
+}
+.sheet-obj.selected{border-color:var(--blue);box-shadow:0 0 0 2px var(--blue-bg),0 2px 16px rgba(26,110,245,.12)}
+.sheet-obj.locked>.sheet-header{cursor:default}
+.sheet-header{
+  display:flex;align-items:center;gap:8px;
+  padding:8px 10px 7px;
+  background:var(--surface2);border-bottom:1px solid var(--border);
+  cursor:move;flex-shrink:0;
+  touch-action:none;
+}
+.sheet-icon{color:var(--green);flex-shrink:0}
+.sheet-name{font-size:12px;font-weight:600;color:var(--text);flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.sheet-tab-bar{display:flex;gap:1px;align-items:center;padding:0 10px;flex-shrink:0}
+.sheet-tab{
+  font-size:11px;padding:3px 10px;border-radius:5px 5px 0 0;
+  cursor:pointer;color:var(--text2);background:var(--surface2);
+  border:1px solid var(--border);border-bottom:none;
+  transition:background .1s;
+}
+.sheet-tab.active{background:var(--surface);color:var(--text);font-weight:500}
+.sheet-tab:hover:not(.active){background:var(--header-bg)}
+
+.sheet-formula-bar{
+  display:flex;align-items:center;gap:6px;
+  padding:4px 8px;border-bottom:1px solid var(--border);
+  background:var(--surface);flex-shrink:0;
+}
+.cell-ref{
+  font-size:11px;font-weight:600;color:var(--text2);
+  min-width:36px;text-align:center;padding:2px 5px;
+  background:var(--surface2);border:1px solid var(--border);border-radius:4px;
+}
+.formula-input{
+  flex:1;border:1px solid var(--border);border-radius:4px;
+  padding:3px 7px;font-size:12px;font-family:inherit;
+  background:var(--surface);color:var(--text);outline:none;
+}
+.formula-input:focus{border-color:var(--blue)}
+
+.sheet-body{flex:1;overflow:auto;position:relative}
+.sheet-table{
+  border-collapse:collapse;table-layout:fixed;
+  font-size:12px;user-select:none;
+}
+.sheet-table th,
+.sheet-table td{
+  border-right:1px solid var(--border);
+  border-bottom:1px solid var(--border);
+  padding:0;min-width:80px;height:22px;
+  vertical-align:middle;
+  white-space:nowrap;overflow:hidden;
+}
+.sheet-table th{
+  background:var(--header-bg);font-weight:500;color:var(--text2);
+  text-align:center;font-size:11px;position:sticky;
+  cursor:default;flex-shrink:0;
+}
+.col-header{top:0;z-index:3;min-width:80px}
+.row-header{left:0;z-index:2;min-width:36px;width:36px;text-align:center;background:var(--header-bg)}
+.corner-cell{left:0;top:0;z-index:4;min-width:36px;width:36px}
+.sheet-table td{
+  cursor:cell;
+  padding:2px 5px;
+  text-align:left;
+}
+.sheet-table td.num{text-align:right}
+.sheet-table td.sel{
+  background:var(--cell-sel) !important;
+  box-shadow:inset 0 0 0 2px var(--cell-sel-border);
+  position:relative;z-index:1;
+}
+.sheet-table td.sel-range{
+  background:var(--cell-sel) !important;
+  opacity:0.7;
+}
+.sheet-table tr:nth-child(even) td:not(.sel){background:var(--row-alt)}
+.cell-editor{
+  position:absolute;border:2px solid var(--blue);
+  background:var(--surface);padding:1px 5px;
+  font-size:12px;font-family:inherit;color:var(--text);
+  outline:none;z-index:50;box-sizing:border-box;
+  min-width:80px;
+}
+
+.obj-controls{display:flex;gap:4px;flex-shrink:0}
+.obj-ctrl-btn{
+  background:none;border:1px solid transparent;border-radius:5px;
+  padding:2px 5px;cursor:pointer;font-size:11px;color:var(--text3);
+  display:flex;align-items:center;
+}
+.obj-ctrl-btn:hover{border-color:var(--border);color:var(--text2);background:var(--surface)}
+.obj-ctrl-btn.on{color:var(--blue)}
+
+.resize-handle{
+  position:absolute;right:0;bottom:0;width:14px;height:14px;
+  cursor:se-resize;z-index:15;
+}
+.resize-handle::after{
+  content:'';position:absolute;right:3px;bottom:3px;
+  width:7px;height:7px;
+  border-right:2px solid var(--border2);border-bottom:2px solid var(--border2);
+}
+
+/* ── COLUMN RESIZE ── */
+.col-resize-grip{
+  position:absolute;right:-3px;top:0;bottom:0;width:6px;
+  cursor:col-resize;z-index:10;
+}
+.col-resize-grip:hover::after,.col-resize-grip.dragging::after{
+  content:'';position:absolute;left:2px;top:20%;height:60%;
+  width:2px;background:var(--blue);border-radius:1px;
+}
+.sheet-table th{position:relative}
+
+/* ── ROW/COL CONTEXT MENU ── */
+#ctx-menu{
+  display:none;position:fixed;
+  background:var(--surface);border:1px solid var(--border2);
+  border-radius:9px;padding:4px;z-index:500;
+  box-shadow:0 8px 24px rgba(0,0,0,.15);min-width:180px;
+}
+#ctx-menu.open{display:block}
+.ctx-item{
+  display:flex;align-items:center;gap:8px;
+  padding:7px 12px;border-radius:6px;cursor:pointer;
+  font-size:12px;color:var(--text);
+}
+.ctx-item:hover{background:var(--surface2)}
+.ctx-item.danger{color:var(--red)}
+.ctx-item svg{flex-shrink:0;color:var(--text2)}
+.ctx-sep{height:1px;background:var(--border);margin:3px 0}
+
+/* ── AUTO-FIT BUTTON in header ── */
+.obj-ctrl-btn.fit-btn{font-size:10px;padding:2px 6px;gap:3px}
+
+/* ── EXPORT FOOTER BAR on each table ── */
+.sheet-export-bar{
+  display:flex;align-items:center;gap:6px;
+  padding:6px 10px;
+  background:var(--surface2);border-top:1px solid var(--border);
+  flex-shrink:0;
+}
+.export-bar-btn{
+  display:flex;align-items:center;gap:5px;
+  padding:5px 12px;border-radius:7px;font-size:12px;font-weight:500;
+  cursor:pointer;border:1px solid var(--border2);
+  background:var(--surface);color:var(--text);
+  transition:background .1s;white-space:nowrap;
+  -webkit-tap-highlight-color:transparent;
+}
+.export-bar-btn:hover{background:var(--header-bg)}
+.export-bar-btn.primary{background:var(--blue);color:#fff;border-color:var(--blue)}
+.export-bar-btn.primary:hover{background:#1558cc}
+.export-bar-btn svg{flex-shrink:0}
+.export-bar-label{font-size:11px;color:var(--text3);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+
+/* ── FORMULA-TYPE HIGHLIGHT ── */
+.formula-cell{color:var(--blue)}
+.error-cell{color:var(--red)}
+
+/* ── STATUS BAR ── */
+#statusbar{
+  position:fixed;bottom:0;left:0;right:0;height:var(--statusbar-h);
+  background:var(--surface);border-top:1px solid var(--border);
+  display:flex;align-items:center;justify-content:space-between;
+  padding:0 12px;z-index:100;font-size:11px;color:var(--text3);
+}
+#statusbar .left{display:flex;gap:14px;align-items:center}
+#statusbar .right{display:flex;gap:10px;align-items:center}
+.status-badge{
+  padding:1px 7px;border-radius:4px;font-size:10px;font-weight:600;
+  text-transform:uppercase;letter-spacing:.04em;
+}
+.badge-draw{background:#fef2f2;color:#b91c1c}
+.badge-hl{background:#fefce8;color:#854d0e}
+.badge-erase{background:#f5f3ff;color:#6d28d9}
+.badge-select{background:var(--blue-bg);color:var(--blue)}
+.badge-edit{background:#f0fdf4;color:#15803d}
+
+/* ── MODALS ── */
+#modal-overlay{
+  display:none;position:fixed;inset:0;background:rgba(0,0,0,.4);
+  z-index:200;align-items:center;justify-content:center;
+}
+#modal-overlay.open{display:flex}
+.modal{
+  background:var(--surface);border:1px solid var(--border2);
+  border-radius:14px;padding:24px;max-width:420px;width:90%;
+  box-shadow:0 20px 60px rgba(0,0,0,.2);
+}
+.modal h3{font-size:16px;font-weight:600;margin-bottom:8px;color:var(--text)}
+.modal p{font-size:13px;color:var(--text2);line-height:1.5;margin-bottom:16px}
+.modal-btns{display:flex;gap:8px;justify-content:flex-end}
+.btn{
+  padding:7px 16px;border-radius:7px;font-size:13px;font-weight:500;
+  cursor:pointer;border:1px solid var(--border2);background:var(--surface2);
+  color:var(--text);transition:background .1s;
+}
+.btn:hover{background:var(--header-bg)}
+.btn.primary{background:var(--blue);color:#fff;border-color:var(--blue)}
+.btn.primary:hover{background:#1558cc}
+.btn.danger{background:var(--red);color:#fff;border-color:var(--red)}
+
+/* ── TOAST ── */
+#toast{
+  position:fixed;bottom:40px;left:50%;transform:translateX(-50%) translateY(20px);
+  background:var(--text);color:var(--surface);
+  padding:9px 18px;border-radius:8px;font-size:12px;
+  opacity:0;transition:opacity .2s,transform .2s;z-index:300;
+  pointer-events:none;white-space:nowrap;
+}
+#toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
+
+/* ── IMPORT PANEL ── */
+#import-zone{
+  display:none;
+  position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);
+  background:var(--surface);border:2px dashed var(--border2);
+  border-radius:16px;padding:48px 40px;text-align:center;
+  z-index:30;pointer-events:all;
+}
+#import-zone.visible{display:block}
+#import-zone h2{font-size:20px;font-weight:700;color:var(--text);margin-bottom:8px}
+#import-zone p{font-size:13px;color:var(--text2);margin-bottom:24px;line-height:1.5}
+#import-zone.drag-over{background:var(--blue-bg);border-color:var(--blue)}
+#file-input{display:none}
+
+/* ── PRESENTATION MODE ── */
+body.presentation #toolbar,body.presentation #statusbar{display:none}
+body.presentation #canvas-area{top:0;bottom:0}
+body.presentation .sheet-header .obj-controls{display:none}
+body.presentation .resize-handle{display:none}
+body.presentation #whiteboard-canvas{pointer-events:none!important}
+
+/* ── CELL HIGHLIGHT OVERLAY ── */
+.cell-highlight{
+  position:absolute;pointer-events:none;z-index:8;
+  border-radius:2px;
+}
+</style>
+</head>
+<body>
+
+<!-- ── TOOLBAR ── -->
+<div id="toolbar">
+  <span id="app-title">Whiteboard</span>
+  <div class="tb-sep"></div>
+
+  <div class="tb-group">
+    <button class="tb-btn active" id="btn-select" onclick="setMode('select')" title="Select / move objects (V)">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 3l14 9-7 1-4 7z"/></svg>
+      <span class="label">Select</span>
+    </button>
+    <button class="tb-btn" id="btn-draw" onclick="setMode('draw')" title="Draw (P)">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 19l7-7 3 3-7 7-3-3z"/><path d="M18 13l-1.5-7.5L2 2l3.5 14.5z"/><path d="M2 2l7.586 7.586"/><circle cx="11" cy="11" r="2"/></svg>
+      <span class="label">Draw</span>
+    </button>
+    <button class="tb-btn" id="btn-highlight" onclick="setMode('highlight')" title="Highlight (H)">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15.5 4.5L19.5 8.5 10 18H6V14z"/><line x1="4" y1="20" x2="20" y2="20"/></svg>
+      <span class="label">Highlight</span>
+    </button>
+    <button class="tb-btn" id="btn-erase" onclick="setMode('erase')" title="Erase (E)">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 20H7L3 16l9-9 8 8z"/><path d="M6 11l7 7"/></svg>
+      <span class="label">Erase</span>
+    </button>
+  </div>
+
+  <div class="tb-sep"></div>
+
+  <div class="tb-group" id="pen-controls">
+    <div id="color-swatches">
+      <div class="swatch active" style="background:#1a1a18" onclick="setColor('#1a1a18')" title="Black" data-color="#1a1a18"></div>
+      <div class="swatch" style="background:#d63b3b" onclick="setColor('#d63b3b')" title="Red" data-color="#d63b3b"></div>
+      <div class="swatch" style="background:#1a6ef5" onclick="setColor('#1a6ef5')" title="Blue" data-color="#1a6ef5"></div>
+      <div class="swatch" style="background:#16a34a" onclick="setColor('#16a34a')" title="Green" data-color="#16a34a"></div>
+      <div class="swatch" style="background:#d97706" onclick="setColor('#d97706')" title="Amber" data-color="#d97706"></div>
+      <div class="swatch" style="background:#7c3aed" onclick="setColor('#7c3aed')" title="Purple" data-color="#7c3aed"></div>
+    </div>
+    <input type="range" id="size-slider" min="1" max="20" value="3" title="Pen size" oninput="penSize=+this.value">
+  </div>
+
+  <div class="tb-sep"></div>
+
+  <div class="tb-group">
+    <button class="tb-btn" id="btn-undo" onclick="undoStroke()" title="Undo (Ctrl+Z)">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 14 4 9 9 4"/><path d="M20 20v-7a4 4 0 0 0-4-4H4"/></svg>
+      <span class="label">Undo</span>
+    </button>
+    <button class="tb-btn" id="btn-redo" onclick="redoStroke()" title="Redo (Ctrl+Shift+Z)">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="15 14 20 9 15 4"/><path d="M4 20v-7a4 4 0 0 1 4-4h12"/></svg>
+      <span class="label">Redo</span>
+    </button>
+    <button class="tb-btn danger" onclick="confirmClear()" title="Clear all drawings">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6m4-6v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>
+      <span class="label">Clear</span>
+    </button>
+  </div>
+
+  <div class="tb-sep"></div>
+
+  <div class="tb-group">
+    <button class="tb-btn" onclick="triggerImport()" title="Import .xlsx or CSV">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+      <span class="label">Import</span>
+    </button>
+    <button class="tb-btn" onclick="createBlankSheet()" title="New calculation table">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="3" y1="15" x2="21" y2="15"/><line x1="9" y1="3" x2="9" y2="21"/></svg>
+      <span class="label">New table</span>
+    </button>
+  </div>
+
+  <div class="tb-sep"></div>
+
+  <div class="tb-group">
+    <button class="tb-btn" onclick="exportToXLSX()" title="Export to Excel">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+      <span class="label">Export .xlsx</span>
+    </button>
+    <button class="tb-btn" onclick="exportToPNG()" title="Export whiteboard as PNG">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
+      <span class="label">PNG</span>
+    </button>
+  </div>
+
+  <div class="tb-spacer"></div>
+
+  <div class="tb-group">
+    <button class="tb-btn" id="btn-grid" onclick="toggleGrid()" title="Toggle grid">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg>
+    </button>
+    <button class="tb-btn" id="btn-present" onclick="togglePresentation()" title="Presentation mode (F)">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
+      <span class="label">Present</span>
+    </button>
+  </div>
+</div>
+<input type="file" id="file-input" accept=".xlsx,.xls,.csv" onchange="handleFileSelect(event)">
+
+<!-- ── CANVAS AREA ── -->
+<div id="canvas-area">
+  <div id="wb-bg"></div>
+  <canvas id="whiteboard-canvas"></canvas>
+
+  <!-- Welcome / import zone (shown when no sheets exist) -->
+  <div id="import-zone" class="visible">
+    <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" style="margin:0 auto 16px;display:block;color:#16a34a"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="3" y1="15" x2="21" y2="15"/><line x1="9" y1="3" x2="9" y2="21"/></svg>
+    <h2>Whiteboard + Calc</h2>
+    <p>Import an Excel or CSV file to place it on the<br>whiteboard, or create a blank calculation table.</p>
+    <div style="display:flex;gap:10px;justify-content:center;flex-wrap:wrap">
+      <button class="btn primary" onclick="triggerImport()">Import .xlsx / CSV</button>
+      <button class="btn" onclick="createBlankSheet();hideImportZone()">New blank table</button>
+      <button class="btn" onclick="createDemoSheet();hideImportZone()">Load demo data</button>
+    </div>
+    <p style="margin-top:16px;font-size:11px;color:var(--text3)">Or drag and drop an Excel file anywhere on this page</p>
+  </div>
+</div>
+
+<!-- ── STATUS BAR ── -->
+<div id="statusbar">
+  <div class="left">
+    <span id="mode-badge" class="status-badge badge-select">Select</span>
+    <span id="status-msg">Drag spreadsheet objects or draw annotations freely</span>
+  </div>
+  <div class="right">
+    <span id="sum-display" style="display:none;color:var(--text2)"></span>
+    <span id="obj-count" style="color:var(--text3)">0 tables</span>
+  </div>
+</div>
+
+<!-- ── MODAL ── -->
+<div id="modal-overlay">
+  <div class="modal">
+    <h3 id="modal-title">Clear all drawings?</h3>
+    <p id="modal-body">This will remove all annotations from the whiteboard. Spreadsheet data is not affected.</p>
+    <div class="modal-btns">
+      <button class="btn" onclick="closeModal()">Cancel</button>
+      <button class="btn danger" id="modal-confirm-btn" onclick="clearAll()">Clear drawings</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── TOAST ── -->
+<div id="toast"></div>
+
+<!-- ── CONTEXT MENU ── -->
+<div id="ctx-menu">
+  <div class="ctx-item" id="ctx-insert-row-above" onclick="ctxAction('insertRowAbove')">
+    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+    Insert row above
+  </div>
+  <div class="ctx-item" id="ctx-insert-row-below" onclick="ctxAction('insertRowBelow')">
+    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+    Insert row below
+  </div>
+  <div class="ctx-item danger" id="ctx-delete-row" onclick="ctxAction('deleteRow')">
+    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="5" y1="12" x2="19" y2="12"/></svg>
+    Delete row
+  </div>
+  <div class="ctx-sep"></div>
+  <div class="ctx-item" id="ctx-insert-col-left" onclick="ctxAction('insertColLeft')">
+    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+    Insert column left
+  </div>
+  <div class="ctx-item" id="ctx-insert-col-right" onclick="ctxAction('insertColRight')">
+    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+    Insert column right
+  </div>
+  <div class="ctx-item danger" id="ctx-delete-col" onclick="ctxAction('deleteCol')">
+    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="5" y1="12" x2="19" y2="12"/></svg>
+    Delete column
+  </div>
+  <div class="ctx-sep"></div>
+  <div class="ctx-item" onclick="ctxAction('autoFitCol')">
+    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="15 3 21 3 21 9"/><polyline points="9 21 3 21 3 15"/><line x1="21" y1="3" x2="14" y2="10"/><line x1="3" y1="21" x2="10" y2="14"/></svg>
+    Auto-fit column width
+  </div>
+  <div class="ctx-item" onclick="ctxAction('autoFitAll')">
+    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="15 3 21 3 21 9"/><polyline points="9 21 3 21 3 15"/><line x1="21" y1="3" x2="14" y2="10"/><line x1="3" y1="21" x2="10" y2="14"/></svg>
+    Auto-fit all columns
+  </div>
+</div>
+
+<script>
+// ════════════════════════════════════════════════════════
+//  STATE
+// ════════════════════════════════════════════════════════
+let mode = 'select';
+let penColor = '#1a1a18';
+let penSize = 3;
+let gridVisible = true;
+let presentationMode = false;
+
+// Drawing strokes
+let strokes = [];    // committed strokes
+let redoStack = [];
+let currentStroke = null;
+let isDrawing = false;
+
+// Sheet objects on the board
+let sheetObjects = [];
+let selectedObj = null;
+let nextObjId = 1;
+
+// Drag state
+let dragState = null;
+let resizeState = null;
+
+// Active cell editor
+let activeEditor = null;
+
+// ════════════════════════════════════════════════════════
+//  CANVAS SETUP
+// ════════════════════════════════════════════════════════
+const canvasEl = document.getElementById('whiteboard-canvas');
+const ctx = canvasEl.getContext('2d');
+let DPR = window.devicePixelRatio || 1;
+
+function resizeCanvas() {
+  const area = document.getElementById('canvas-area');
+  const w = area.clientWidth;
+  const h = area.clientHeight;
+  DPR = window.devicePixelRatio || 1;
+  canvasEl.width = w * DPR;
+  canvasEl.height = h * DPR;
+  canvasEl.style.width = w + 'px';
+  canvasEl.style.height = h + 'px';
+  redrawAll();
+}
+
+function redrawAll() {
+  ctx.clearRect(0, 0, canvasEl.width, canvasEl.height);
+  ctx.save();
+  ctx.scale(DPR, DPR);
+  for (const s of strokes) drawStroke(s);
+  if (currentStroke) drawStroke(currentStroke);
+  ctx.restore();
+}
+
+function drawStroke(s) {
+  if (!s.points || s.points.length < 1) return;
+  ctx.save();
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+  if (s.type === 'highlight') {
+    ctx.globalAlpha = 0.35;
+    ctx.strokeStyle = '#eab308';
+    ctx.lineWidth = s.size * 5;
+    ctx.lineCap = 'square';
+  } else {
+    ctx.globalAlpha = 1;
+    ctx.strokeStyle = s.color;
+    ctx.lineWidth = s.size;
+  }
+  ctx.beginPath();
+  const pts = s.points;
+  ctx.moveTo(pts[0].x, pts[0].y);
+  for (let i = 1; i < pts.length; i++) {
+    if (i < pts.length - 1) {
+      const mx = (pts[i].x + pts[i+1].x) / 2;
+      const my = (pts[i].y + pts[i+1].y) / 2;
+      ctx.quadraticCurveTo(pts[i].x, pts[i].y, mx, my);
+    } else {
+      ctx.lineTo(pts[i].x, pts[i].y);
+    }
+  }
+  ctx.stroke();
+  ctx.restore();
+}
+
+window.addEventListener('resize', resizeCanvas);
+resizeCanvas();
+
+// ════════════════════════════════════════════════════════
+//  MODE
+// ════════════════════════════════════════════════════════
+function setMode(m) {
+  mode = m;
+  closeEditor();
+  ['select','draw','highlight','erase'].forEach(id => {
+    document.getElementById('btn-'+id).classList.toggle('active', id === m);
+  });
+  const msgs = {
+    select: 'Drag tables, edit cells, or resize objects',
+    draw: 'Draw freely — spreadsheets remain interactive underneath',
+    highlight: 'Swipe to highlight areas in yellow',
+    erase: 'Drag over drawings to erase annotations'
+  };
+  const badges = {select:'badge-select',draw:'badge-draw',highlight:'badge-hl',erase:'badge-erase'};
+  const badge = document.getElementById('mode-badge');
+  badge.className = 'status-badge ' + badges[m];
+  badge.textContent = m.charAt(0).toUpperCase() + m.slice(1);
+  document.getElementById('status-msg').textContent = msgs[m];
+
+  canvasEl.style.pointerEvents = (m === 'select') ? 'none' : 'all';
+  canvasEl.style.cursor = m === 'erase' ? 'cell' : m === 'select' ? 'default' : 'crosshair';
+
+  // When switching to select, re-enable all sheet interactions
+  document.querySelectorAll('.sheet-obj').forEach(el => {
+    el.style.pointerEvents = (m === 'select') ? 'all' : 'none';
+  });
+}
+
+// ════════════════════════════════════════════════════════
+//  PEN CONTROLS
+// ════════════════════════════════════════════════════════
+function setColor(c) {
+  penColor = c;
+  document.querySelectorAll('.swatch').forEach(sw => {
+    sw.classList.toggle('active', sw.dataset.color === c);
+  });
+}
+
+// ════════════════════════════════════════════════════════
+//  POINTER EVENTS — DRAWING
+// ════════════════════════════════════════════════════════
+function getCanvasPos(e) {
+  const r = canvasEl.getBoundingClientRect();
+  const src = e.touches ? e.touches[0] : e;
+  return { x: src.clientX - r.left, y: src.clientY - r.top };
+}
+
+canvasEl.addEventListener('pointerdown', e => {
+  if (mode === 'select') return;
+  e.preventDefault();
+  canvasEl.setPointerCapture(e.pointerId);
+  const p = getCanvasPos(e);
+  isDrawing = true;
+  redoStack = [];
+
+  if (mode === 'erase') {
+    currentStroke = { type: 'erase', points: [p], size: penSize * 6, color: '#000' };
+  } else {
+    currentStroke = { type: mode, points: [p], size: penSize, color: penColor };
+  }
+});
+
+canvasEl.addEventListener('pointermove', e => {
+  if (!isDrawing || !currentStroke) return;
+  e.preventDefault();
+  const p = getCanvasPos(e);
+
+  if (mode === 'erase') {
+    eraseAt(p.x, p.y, penSize * 6);
+    return;
+  }
+
+  currentStroke.points.push(p);
+  if (currentStroke.points.length % 3 === 0) redrawAll();
+});
+
+canvasEl.addEventListener('pointerup', e => {
+  if (!isDrawing) return;
+  isDrawing = false;
+  if (currentStroke && currentStroke.type !== 'erase') {
+    strokes.push(currentStroke);
+  }
+  currentStroke = null;
+  redrawAll();
+});
+
+function eraseAt(cx, cy, radius) {
+  const before = strokes.length;
+  strokes = strokes.filter(s => {
+    return !s.points.some(p => {
+      const dx = p.x - cx, dy = p.y - cy;
+      return Math.sqrt(dx*dx + dy*dy) < radius;
+    });
+  });
+  if (strokes.length !== before) redrawAll();
+}
+
+// ════════════════════════════════════════════════════════
+//  UNDO / REDO
+// ════════════════════════════════════════════════════════
+function undoStroke() {
+  if (!strokes.length) return;
+  redoStack.push(strokes.pop());
+  redrawAll();
+}
+function redoStroke() {
+  if (!redoStack.length) return;
+  strokes.push(redoStack.pop());
+  redrawAll();
+}
+
+document.addEventListener('keydown', e => {
+  if (e.target.tagName === 'INPUT' || e.target.classList.contains('cell-editor')) return;
+  if ((e.ctrlKey || e.metaKey) && e.key === 'z' && !e.shiftKey) { e.preventDefault(); undoStroke(); }
+  if ((e.ctrlKey || e.metaKey) && (e.key === 'y' || (e.key === 'z' && e.shiftKey))) { e.preventDefault(); redoStroke(); }
+  if (e.key === 'v' || e.key === 'V') setMode('select');
+  if (e.key === 'p' || e.key === 'P') setMode('draw');
+  if (e.key === 'h' || e.key === 'H') setMode('highlight');
+  if (e.key === 'e' || e.key === 'E') setMode('erase');
+  if (e.key === 'f' || e.key === 'F') togglePresentation();
+  if (e.key === 'Escape') { closeEditor(); selectObj(null); }
+});
+
+// ════════════════════════════════════════════════════════
+//  CLEAR
+// ════════════════════════════════════════════════════════
+function confirmClear() { openModal(); }
+function clearAll() {
+  strokes = [];
+  redoStack = [];
+  redrawAll();
+  closeModal();
+  toast('Annotations cleared');
+}
+
+// ════════════════════════════════════════════════════════
+//  FORMULA ENGINE  — 60+ functions
+// ════════════════════════════════════════════════════════
+
+function colIndex(s) {
+  let n = 0;
+  for (let i = 0; i < s.length; i++) n = n * 26 + (s.charCodeAt(i) - 64);
+  return n - 1;
+}
+
+function splitArgs(s) {
+  const parts = []; let depth = 0, cur = '';
+  for (const ch of s) {
+    if (ch === '(') { depth++; cur += ch; }
+    else if (ch === ')') { depth--; cur += ch; }
+    else if (ch === ',' && depth === 0) { parts.push(cur.trim()); cur = ''; }
+    else cur += ch;
+  }
+  if (cur.trim()) parts.push(cur.trim());
+  return parts;
+}
+
+// Resolve a token that may be a cell ref, range, number literal, or quoted string
+// Returns a JS value (number | string | array of numbers)
+function resolveToken(tok, grid, maxR, maxC, depth) {
+  tok = tok.trim();
+  // Quoted string literal "..."
+  if (tok.startsWith('"') && tok.endsWith('"')) return tok.slice(1, -1);
+  // Range A1:B3
+  const rangeM = tok.match(/^\$?([A-Z]+)\$?(\d+):\$?([A-Z]+)\$?(\d+)$/);
+  if (rangeM) {
+    const c1=colIndex(rangeM[1]), r1=parseInt(rangeM[2])-1;
+    const c2=colIndex(rangeM[3]), r2=parseInt(rangeM[4])-1;
+    const vals=[];
+    for (let r=r1; r<=r2; r++) for (let c=c1; c<=c2; c++) {
+      const v = resolveCell(r, c, grid, maxR, maxC, depth);
+      vals.push(v);
+    }
+    return vals;
+  }
+  // Single cell ref A1
+  const cellM = tok.match(/^\$?([A-Z]+)\$?(\d+)$/);
+  if (cellM) return resolveCell(parseInt(cellM[2])-1, colIndex(cellM[1]), grid, maxR, maxC, depth);
+  // Number
+  if (!isNaN(+tok) && tok !== '') return +tok;
+  // Boolean
+  if (tok === 'TRUE') return 1;
+  if (tok === 'FALSE') return 0;
+  return tok;
+}
+
+function resolveCell(r, c, grid, maxR, maxC, depth) {
+  if (r < 0 || r >= maxR || c < 0 || c >= maxC) return 0;
+  const v = grid[r] && grid[r][c];
+  if (v === '' || v == null) return 0;
+  if (typeof v === 'number') return v;
+  if (typeof v === 'string' && v.startsWith('=')) return evalFormula(v, grid, maxR, maxC, depth+1);
+  if (!isNaN(+v)) return +v;
+  return v;
+}
+
+// Flatten a mix of values/arrays to a flat array of numbers only
+function flatNums(args) {
+  return [].concat(...args.map(a => Array.isArray(a) ? a : [a]))
+    .map(v => typeof v === 'number' ? v : (!isNaN(+v) && v !== '' ? +v : null))
+    .filter(v => v !== null && isFinite(v));
+}
+// Flatten including non-numeric (for COUNTA etc.)
+function flatAll(args) {
+  return [].concat(...args.map(a => Array.isArray(a) ? a : [a]))
+    .filter(v => v !== '' && v !== null && v !== undefined);
+}
+
+function evalFormula(formula, grid, maxR, maxC, _depth) {
+  if ((_depth||0) > 40) return '#CIRC!';
+  const raw = String(formula).trim();
+  if (!raw.startsWith('=')) return isNaN(+raw) ? raw : +raw;
+  const depth = (_depth||0);
+
+  // Normalise — keep case for TEXT functions, operate on uppercase copy for matching
+  const expr = raw.slice(1).trim();
+
+  try {
+    return evalExpr(expr, grid, maxR, maxC, depth);
+  } catch(e) {
+    return '#ERR!';
+  }
+}
+
+// ── MAIN DISPATCHER ──────────────────────────────────────
+function evalExpr(expr, grid, maxR, maxC, depth) {
+  expr = expr.trim();
+
+  // Strip outer parens
+  if (expr.startsWith('(') && matchingParen(expr, 0) === expr.length-1) {
+    return evalExpr(expr.slice(1,-1), grid, maxR, maxC, depth);
+  }
+
+  // Split on lowest-precedence binary operator (outside parens/quotes)
+  const binResult = evalBinary(expr, grid, maxR, maxC, depth);
+  if (binResult !== undefined) return binResult;
+
+  // Unary minus
+  if (expr.startsWith('-')) {
+    const v = evalExpr(expr.slice(1), grid, maxR, maxC, depth);
+    return typeof v === 'number' ? -v : '#ERR!';
+  }
+
+  // Function call  NAME(...)
+  const fnMatch = expr.match(/^([A-Z][A-Z0-9_]*)\(([\s\S]*)\)\s*$/);
+  if (fnMatch) {
+    const fn = fnMatch[1].toUpperCase();
+    const argsRaw = fnMatch[2];
+    return evalFn(fn, argsRaw, grid, maxR, maxC, depth);
+  }
+
+  // Literal / cell ref / range
+  const v = resolveToken(expr.toUpperCase(), grid, maxR, maxC, depth);
+  if (Array.isArray(v)) return v[0] !== undefined ? v[0] : 0;
+  return v;
+}
+
+function matchingParen(s, open) {
+  let d = 0;
+  for (let i = open; i < s.length; i++) {
+    if (s[i] === '(') d++;
+    else if (s[i] === ')') { d--; if (d === 0) return i; }
+  }
+  return -1;
+}
+
+// Split expression on binary operators respecting paren/quote depth
+function evalBinary(expr, grid, maxR, maxC, depth) {
+  // Operators in ascending precedence order (lower index = lower precedence = split first)
+  const ops = [
+    ['&'],                        // string concat
+    ['>=','<=','<>','=','>','<'], // comparison
+    ['+','-'],                    // additive
+    ['*','/'],                    // multiplicative
+    ['^'],                        // power
+  ];
+  for (const group of ops) {
+    const idx = findOperator(expr, group);
+    if (idx !== -1) {
+      const op = group.find(o => expr.slice(idx, idx+o.length) === o);
+      const left  = evalExpr(expr.slice(0, idx), grid, maxR, maxC, depth);
+      const right = evalExpr(expr.slice(idx+op.length), grid, maxR, maxC, depth);
+      const l = typeof left  === 'number' ? left  : (!isNaN(+left)  ? +left  : left);
+      const r = typeof right === 'number' ? right : (!isNaN(+right) ? +right : right);
+      switch(op) {
+        case '+': return (+l||0) + (+r||0);
+        case '-': return (+l||0) - (+r||0);
+        case '*': return (+l||0) * (+r||0);
+        case '/': return r === 0 || r === '0' ? '#DIV/0!' : (+l||0) / (+r||0);
+        case '^': return Math.pow(+l||0, +r||0);
+        case '&': return String(l===0?0:l||'') + String(r===0?0:r||'');
+        case '=':  return (l == r || String(l).toUpperCase() === String(r).toUpperCase()) ? 1 : 0;
+        case '<>': return (l != r && String(l).toUpperCase() !== String(r).toUpperCase()) ? 1 : 0;
+        case '>':  return (+l > +r) ? 1 : 0;
+        case '<':  return (+l < +r) ? 1 : 0;
+        case '>=': return (+l >= +r) ? 1 : 0;
+        case '<=': return (+l <= +r) ? 1 : 0;
+      }
+    }
+  }
+  return undefined;
+}
+
+function findOperator(expr, ops) {
+  let depth = 0, inQ = false;
+  // Scan RIGHT to LEFT for left-associativity
+  for (let i = expr.length - 1; i >= 0; i--) {
+    const ch = expr[i];
+    if (ch === '"') inQ = !inQ;
+    if (inQ) continue;
+    if (ch === ')') depth++;
+    if (ch === '(') depth--;
+    if (depth !== 0) continue;
+    for (const op of ops) {
+      if (expr.slice(i, i+op.length) === op) {
+        // Make sure not a unary minus at start or after operator
+        if (op === '-' && i === 0) continue;
+        if (op === '-' && /[+\-*/^,(=<>&]/.test(expr[i-1]||'')) continue;
+        return i;
+      }
+    }
+  }
+  return -1;
+}
+
+// ── FUNCTION REGISTRY ─────────────────────────────────────
+function evalFn(fn, argsRaw, grid, maxR, maxC, depth) {
+  // Evaluate each argument
+  const rawArgs = splitArgs(argsRaw);
+  const args = rawArgs.map(a => {
+    const up = a.trim().toUpperCase();
+    // Range or cell ref — resolve directly
+    if (/^\$?[A-Z]+\$?\d+:\$?[A-Z]+\$?\d+$/.test(up) || /^\$?[A-Z]+\$?\d+$/.test(up)) {
+      return resolveToken(up, grid, maxR, maxC, depth);
+    }
+    // Otherwise evaluate as expression
+    return evalExpr(a.trim(), grid, maxR, maxC, depth);
+  });
+
+  const nums  = flatNums(args);
+  const all   = flatAll(args);
+  const a0 = args[0], a1 = args[1], a2 = args[2];
+  const n0 = typeof a0==='number'?a0:(+a0||0);
+  const n1 = typeof a1==='number'?a1:(+a1||0);
+  const n2 = typeof a2==='number'?a2:(+a2||0);
+
+  // ── MATH & TRIG ─────────────────────────────────
+  switch(fn) {
+    case 'SUM':      return nums.reduce((a,b)=>a+b,0);
+    case 'SUMPRODUCT': {
+      // Two equal-length ranges → multiply element-wise and sum
+      const a = Array.isArray(args[0])?args[0].map(Number):[ n0 ];
+      const b = Array.isArray(args[1])?args[1].map(Number):[ n1 ];
+      return a.reduce((s,v,i)=>s+(v*(b[i]||0)),0);
+    }
+    case 'PRODUCT':  return nums.reduce((a,b)=>a*b,1);
+    case 'ABS':      return Math.abs(n0);
+    case 'SQRT':     return n0 < 0 ? '#NUM!' : Math.sqrt(n0);
+    case 'POWER':    return Math.pow(n0, n1);
+    case 'EXP':      return Math.exp(n0);
+    case 'LN':       return n0<=0?'#NUM!':Math.log(n0);
+    case 'LOG':      return n0<=0?'#NUM!':Math.log10(n0);
+    case 'LOG10':    return n0<=0?'#NUM!':Math.log10(n0);
+    case 'MOD':      return n1===0?'#DIV/0!':n0 - n1*Math.floor(n0/n1);
+    case 'INT':      return Math.floor(n0);
+    case 'TRUNC':    return Math.trunc(n0);
+    case 'ROUND':    return +n0.toFixed(Math.max(0,Math.round(n1)));
+    case 'ROUNDUP':  { const f=Math.pow(10,n1); return Math.ceil(n0*f)/f; }
+    case 'ROUNDDOWN':{ const f=Math.pow(10,n1); return Math.floor(n0*f)/f; }
+    case 'CEILING':  return n1===0?0:Math.ceil(n0/n1)*n1;
+    case 'FLOOR':    return n1===0?0:Math.floor(n0/n1)*n1;
+    case 'MROUND':   return n1===0?0:Math.round(n0/n1)*n1;
+    case 'SIGN':     return n0>0?1:n0<0?-1:0;
+    case 'PI':       return Math.PI;
+    case 'RADIANS':  return n0*Math.PI/180;
+    case 'DEGREES':  return n0*180/Math.PI;
+    case 'SIN':      return Math.sin(n0);
+    case 'COS':      return Math.cos(n0);
+    case 'TAN':      return Math.tan(n0);
+    case 'ASIN':     return Math.asin(n0);
+    case 'ACOS':     return Math.acos(n0);
+    case 'ATAN':     return Math.atan(n0);
+    case 'ATAN2':    return Math.atan2(n0, n1);
+    case 'RAND':     return Math.random();
+    case 'RANDBETWEEN': return Math.floor(Math.random()*(n1-n0+1))+n0;
+    case 'FACT': {
+      if (n0<0) return '#NUM!';
+      let f=1; for(let i=2;i<=Math.round(n0);i++) f*=i; return f;
+    }
+    case 'COMBIN': {
+      if (n0<0||n1<0||n1>n0) return '#NUM!';
+      let r=1;
+      for(let i=0;i<n1;i++) r=r*(n0-i)/(i+1);
+      return Math.round(r);
+    }
+    case 'GCD': {
+      let a=Math.abs(Math.round(n0)), b=Math.abs(Math.round(n1));
+      while(b){const t=b;b=a%b;a=t;} return a;
+    }
+    case 'LCM': {
+      let a=Math.abs(Math.round(n0)), b=Math.abs(Math.round(n1)), orig=[a,b];
+      let g=a; while(b){const t=b;b=g%b;g=t;}
+      return g===0?0:(orig[0]/g)*orig[1];
+    }
+
+    // ── STATISTICAL ──────────────────────────────
+    case 'AVERAGE':  return nums.length?nums.reduce((a,b)=>a+b,0)/nums.length:'#DIV/0!';
+    case 'AVERAGEA': return all.length?flatNums(args).reduce((a,b)=>a+b,0)/all.length:'#DIV/0!';
+    case 'COUNT':    return nums.length;
+    case 'COUNTA':   return all.length;
+    case 'COUNTBLANK': {
+      const tot = Array.isArray(a0)?a0.length:1;
+      return tot - all.length;
+    }
+    case 'MIN':      return nums.length?Math.min(...nums):'#NUM!';
+    case 'MAX':      return nums.length?Math.max(...nums):'#NUM!';
+    case 'MINA':     return nums.length?Math.min(...nums):'#NUM!';
+    case 'MAXA':     return nums.length?Math.max(...nums):'#NUM!';
+    case 'MEDIAN': {
+      if(!nums.length) return '#NUM!';
+      const s=[...nums].sort((a,b)=>a-b), m=Math.floor(s.length/2);
+      return s.length%2?s[m]:(s[m-1]+s[m])/2;
+    }
+    case 'MODE': {
+      if(!nums.length) return '#NUM!';
+      const freq={};
+      nums.forEach(v=>{freq[v]=(freq[v]||0)+1;});
+      return +Object.entries(freq).sort((a,b)=>b[1]-a[1])[0][0];
+    }
+    case 'STDEV':
+    case 'STDEVP':
+    case 'STDEV_S':
+    case 'STDEV_P': {
+      if(nums.length<2) return '#DIV/0!';
+      const pop = fn==='STDEVP'||fn==='STDEV_P';
+      const mean=nums.reduce((a,b)=>a+b,0)/nums.length;
+      const variance=nums.reduce((a,v)=>a+(v-mean)**2,0)/(pop?nums.length:nums.length-1);
+      return Math.sqrt(variance);
+    }
+    case 'VAR':
+    case 'VARP': {
+      if(nums.length<2) return '#DIV/0!';
+      const mean=nums.reduce((a,b)=>a+b,0)/nums.length;
+      return nums.reduce((a,v)=>a+(v-mean)**2,0)/(fn==='VARP'?nums.length:nums.length-1);
+    }
+    case 'LARGE': {
+      const s=[...nums].sort((a,b)=>b-a); return s[n1-1]??'#NUM!';
+    }
+    case 'SMALL': {
+      const s=[...nums].sort((a,b)=>a-b); return s[n1-1]??'#NUM!';
+    }
+    case 'RANK': {
+      // RANK(number, range, [order])
+      const list = flatNums([a1]);
+      const order = (args[2]||0)==0?'desc':'asc';
+      const sorted = [...list].sort((a,b)=>order==='desc'?b-a:a-b);
+      const rank = sorted.indexOf(n0)+1;
+      return rank===0?'#N/A':rank;
+    }
+    case 'PERCENTILE': {
+      const s=[...nums].sort((a,b)=>a-b);
+      const i=n1*(s.length-1);
+      const lo=Math.floor(i), hi=Math.ceil(i);
+      return s[lo]+(s[hi]-s[lo])*(i-lo);
+    }
+    case 'QUARTILE': {
+      const s=[...flatNums([a0])].sort((a,b)=>a-b);
+      const p=[0,0.25,0.5,0.75,1][Math.round(n1)];
+      const i=p*(s.length-1), lo=Math.floor(i), hi=Math.ceil(i);
+      return s[lo]+(s[hi]-s[lo])*(i-lo);
+    }
+    case 'CORREL': {
+      const xs=flatNums([a0]), ys=flatNums([a1]);
+      const n=Math.min(xs.length,ys.length);
+      if(n<2) return '#DIV/0!';
+      const mx=xs.slice(0,n).reduce((a,b)=>a+b)/n, my=ys.slice(0,n).reduce((a,b)=>a+b)/n;
+      let num=0,dx=0,dy=0;
+      for(let i=0;i<n;i++){num+=(xs[i]-mx)*(ys[i]-my);dx+=(xs[i]-mx)**2;dy+=(ys[i]-my)**2;}
+      return dx&&dy?num/Math.sqrt(dx*dy):'#DIV/0!';
+    }
+    case 'NORMDIST':
+    case 'NORM_DIST': {
+      // NORMDIST(x, mean, stdev, cumulative)
+      const x=(n0-n1)/(n2||1);
+      const cum = args[3];
+      if(!cum||cum===0||cum==='FALSE') {
+        return Math.exp(-0.5*x*x)/(Math.sqrt(2*Math.PI)*(n2||1));
+      }
+      // Cumulative: approximation
+      return 0.5*(1+erf(x/Math.SQRT2));
+    }
+    case 'COUNTIF': {
+      const range=flatAll([a0]), crit=String(a1??'').toUpperCase();
+      return range.filter(v=>matchCriteria(v,crit)).length;
+    }
+    case 'COUNTIFS': {
+      // COUNTIFS(range1,crit1,range2,crit2,...)
+      if(args.length<2) return '#ARG!';
+      const pairs=[];
+      for(let i=0;i<args.length;i+=2) pairs.push([flatAll([args[i]]),String(args[i+1]??'').toUpperCase()]);
+      const len=pairs[0][0].length;
+      let count=0;
+      for(let i=0;i<len;i++) {
+        if(pairs.every(([range,crit])=>matchCriteria(range[i],crit))) count++;
+      }
+      return count;
+    }
+    case 'SUMIF': {
+      const range=flatAll([a0]), crit=String(a1??'').toUpperCase();
+      const sumRange=args[2]?flatNums([a2]):flatNums([a0]);
+      return range.reduce((s,v,i)=>matchCriteria(v,crit)?s+(sumRange[i]||0):s,0);
+    }
+    case 'SUMIFS': {
+      // SUMIFS(sum_range, criteria_range1, criteria1, ...)
+      const sumR=flatNums([a0]);
+      const pairs=[];
+      for(let i=1;i<args.length;i+=2) pairs.push([flatAll([args[i]]),String(args[i+1]??'').toUpperCase()]);
+      return sumR.reduce((s,v,i)=>pairs.every(([r,c])=>matchCriteria(r[i],c))?s+v:s,0);
+    }
+    case 'AVERAGEIF': {
+      const range=flatAll([a0]), crit=String(a1??'').toUpperCase();
+      const avgR=args[2]?flatNums([a2]):flatNums([a0]);
+      const matched=range.reduce((a,v,i)=>matchCriteria(v,crit)?[...a,avgR[i]]:a,[]);
+      return matched.length?matched.reduce((a,b)=>a+b,0)/matched.length:'#DIV/0!';
+    }
+
+    // ── FINANCIAL ────────────────────────────────
+    case 'PMT': {
+      // PMT(rate, nper, pv, [fv], [type])
+      const rate=n0, nper=n1, pv=n2;
+      if(rate===0) return -pv/nper;
+      const r=Math.pow(1+rate,nper);
+      return -(pv*rate*r)/(r-1);
+    }
+    case 'PV': {
+      // PV(rate, nper, pmt, [fv], [type])
+      const rate=n0, nper=n1, pmt=n2;
+      if(rate===0) return -pmt*nper;
+      const r=Math.pow(1+rate,nper);
+      return -(pmt*(r-1)/rate)/r;
+    }
+    case 'FV': {
+      // FV(rate, nper, pmt, [pv], [type])
+      const rate=n0, nper=n1, pmt=n2, pv=+(args[3]||0);
+      if(rate===0) return -pmt*nper-pv;
+      const r=Math.pow(1+rate,nper);
+      return -(pv*r + pmt*(r-1)/rate);
+    }
+    case 'NPER': {
+      const rate=n0, pmt=n1, pv=n2;
+      if(rate===0) return -pv/pmt;
+      return Math.log(pmt/(pmt+pv*rate))/Math.log(1+rate);
+    }
+    case 'RATE': {
+      // Simple Newton approximation
+      const nper=n0, pmt=n1, pv=n2;
+      let r=0.1;
+      for(let i=0;i<100;i++){
+        const rr=Math.pow(1+r,nper);
+        const f=pv*rr+pmt*(rr-1)/r;
+        const df=nper*pv*Math.pow(1+r,nper-1)+pmt*((nper*Math.pow(1+r,nper-1)*r-(rr-1))/(r*r));
+        const nr=r-f/df;
+        if(Math.abs(nr-r)<1e-8){r=nr;break;}
+        r=nr;
+      }
+      return r;
+    }
+    case 'NPV': {
+      // NPV(rate, value1, value2, ...)
+      const rate=n0;
+      const cashflows=flatNums(args.slice(1));
+      return cashflows.reduce((s,v,i)=>s+v/Math.pow(1+rate,i+1),0);
+    }
+    case 'IRR': {
+      // Internal Rate of Return — Newton-Raphson
+      const cf=flatNums([a0]);
+      let r=0.1;
+      for(let i=0;i<200;i++){
+        const npv=cf.reduce((s,v,t)=>s+v/Math.pow(1+r,t),0);
+        const dnpv=cf.reduce((s,v,t)=>s-t*v/Math.pow(1+r,t+1),0);
+        if(Math.abs(dnpv)<1e-12) break;
+        const nr=r-npv/dnpv;
+        if(Math.abs(nr-r)<1e-8){r=nr;break;}
+        r=nr;
+      }
+      return r;
+    }
+    case 'SLN': {
+      // Straight-line depreciation: SLN(cost, salvage, life)
+      return (n0-n1)/n2;
+    }
+    case 'IPMT': {
+      // IPMT(rate, per, nper, pv)
+      const rate=n0,per=n1,nper=n2,pv=+(args[3]||0);
+      const pmt_val = rate===0?-pv/nper:-(pv*rate*Math.pow(1+rate,nper))/(Math.pow(1+rate,nper)-1);
+      return pv*Math.pow(1+rate,per-1)*rate+pmt_val*(Math.pow(1+rate,per-1)-1);
+    }
+    case 'PPMT': {
+      const rate=n0,per=n1,nper=n2,pv=+(args[3]||0);
+      const pmt_val = rate===0?-pv/nper:-(pv*rate*Math.pow(1+rate,nper))/(Math.pow(1+rate,nper)-1);
+      const ipmt_val = pv*Math.pow(1+rate,per-1)*rate+pmt_val*(Math.pow(1+rate,per-1)-1);
+      return pmt_val-ipmt_val;
+    }
+
+    // ── LOGICAL ──────────────────────────────────
+    case 'IF': {
+      const parts=splitArgs(argsRaw);
+      if(parts.length<2) return '#ARG!';
+      const cond=evalExpr(parts[0],grid,maxR,maxC,depth);
+      const truthy = cond && cond!=='0' && cond!=='FALSE' && cond!==0 && cond!==false;
+      return evalExpr(parts[truthy?1:2]??'0',grid,maxR,maxC,depth);
+    }
+    case 'IFS': {
+      const parts=splitArgs(argsRaw);
+      for(let i=0;i<parts.length-1;i+=2){
+        const cond=evalExpr(parts[i],grid,maxR,maxC,depth);
+        if(cond&&cond!==0&&cond!=='FALSE') return evalExpr(parts[i+1],grid,maxR,maxC,depth);
+      }
+      return '#N/A';
+    }
+    case 'AND': return args.every(v=>v&&v!==0&&v!=='FALSE')?1:0;
+    case 'OR':  return args.some(v=>v&&v!==0&&v!=='FALSE')?1:0;
+    case 'NOT': return (!n0||n0==='FALSE')?1:0;
+    case 'XOR': return args.filter(v=>v&&v!==0&&v!=='FALSE').length%2===1?1:0;
+    case 'TRUE':  return 1;
+    case 'FALSE': return 0;
+    case 'IFERROR': {
+      const parts=splitArgs(argsRaw);
+      const v=evalExpr(parts[0],grid,maxR,maxC,depth);
+      return (typeof v==='string'&&v.startsWith('#'))?evalExpr(parts[1]??'',grid,maxR,maxC,depth):v;
+    }
+    case 'IFNA': {
+      const parts=splitArgs(argsRaw);
+      const v=evalExpr(parts[0],grid,maxR,maxC,depth);
+      return v==='#N/A'?evalExpr(parts[1]??'',grid,maxR,maxC,depth):v;
+    }
+    case 'SWITCH': {
+      const parts=splitArgs(argsRaw);
+      const val=evalExpr(parts[0],grid,maxR,maxC,depth);
+      for(let i=1;i<parts.length-1;i+=2){
+        const key=evalExpr(parts[i],grid,maxR,maxC,depth);
+        if(String(val).toUpperCase()===String(key).toUpperCase()) return evalExpr(parts[i+1],grid,maxR,maxC,depth);
+      }
+      return parts.length%2===0?evalExpr(parts[parts.length-1],grid,maxR,maxC,depth):'#N/A';
+    }
+    case 'ISBLANK':  return (a0===''||a0===null||a0===undefined)?1:0;
+    case 'ISNUMBER': return typeof a0==='number'||(!isNaN(+a0)&&a0!=='')?1:0;
+    case 'ISTEXT':   return typeof a0==='string'&&isNaN(+a0)&&a0!==''?1:0;
+    case 'ISERROR':  return (typeof a0==='string'&&a0.startsWith('#'))?1:0;
+    case 'ISNA':     return a0==='#N/A'?1:0;
+
+    // ── LOOKUP & REFERENCE ───────────────────────
+    case 'VLOOKUP': {
+      const parts=splitArgs(argsRaw);
+      const lookVal=String(evalExpr(parts[0],grid,maxR,maxC,depth)).toUpperCase();
+      const rangeRef=parts[1].trim().toUpperCase();
+      const colNum=+evalExpr(parts[2],grid,maxR,maxC,depth);
+      const exact=parts[3]?String(evalExpr(parts[3],grid,maxR,maxC,depth)).toUpperCase()!=='1':'TRUE';
+      const rm=rangeRef.match(/^\$?([A-Z]+)\$?(\d+):\$?([A-Z]+)\$?(\d+)$/);
+      if(!rm) return '#REF!';
+      const c1=colIndex(rm[1]),r1=parseInt(rm[2])-1,r2=parseInt(rm[4])-1;
+      for(let r=r1;r<=r2;r++){
+        const cellV=String(resolveCell(r,c1,grid,maxR,maxC,depth)).toUpperCase();
+        if(cellV===lookVal) return resolveCell(r,c1+colNum-1,grid,maxR,maxC,depth);
+      }
+      return '#N/A';
+    }
+    case 'HLOOKUP': {
+      const parts=splitArgs(argsRaw);
+      const lookVal=String(evalExpr(parts[0],grid,maxR,maxC,depth)).toUpperCase();
+      const rangeRef=parts[1].trim().toUpperCase();
+      const rowNum=+evalExpr(parts[2],grid,maxR,maxC,depth);
+      const rm=rangeRef.match(/^\$?([A-Z]+)\$?(\d+):\$?([A-Z]+)\$?(\d+)$/);
+      if(!rm) return '#REF!';
+      const c1=colIndex(rm[1]),c2=colIndex(rm[3]),r1=parseInt(rm[2])-1;
+      for(let c=c1;c<=c2;c++){
+        const cellV=String(resolveCell(r1,c,grid,maxR,maxC,depth)).toUpperCase();
+        if(cellV===lookVal) return resolveCell(r1+rowNum-1,c,grid,maxR,maxC,depth);
+      }
+      return '#N/A';
+    }
+    case 'INDEX': {
+      const parts=splitArgs(argsRaw);
+      const rangeRef=parts[0].trim().toUpperCase();
+      const rowN=+evalExpr(parts[1],grid,maxR,maxC,depth)-1;
+      const colN=parts[2]?(+evalExpr(parts[2],grid,maxR,maxC,depth)-1):0;
+      const rm=rangeRef.match(/^\$?([A-Z]+)\$?(\d+):\$?([A-Z]+)\$?(\d+)$/);
+      if(!rm) return '#REF!';
+      return resolveCell(parseInt(rm[2])-1+rowN, colIndex(rm[1])+colN, grid,maxR,maxC,depth);
+    }
+    case 'MATCH': {
+      const parts=splitArgs(argsRaw);
+      const lookVal=String(evalExpr(parts[0],grid,maxR,maxC,depth)).toUpperCase();
+      const rangeRef=parts[1].trim().toUpperCase();
+      const rm=rangeRef.match(/^\$?([A-Z]+)\$?(\d+):\$?([A-Z]+)\$?(\d+)$/);
+      if(!rm) return '#REF!';
+      const c1=colIndex(rm[1]),c2=colIndex(rm[3]),r1=parseInt(rm[2])-1,r2=parseInt(rm[4])-1;
+      // Try column match first, then row
+      for(let r=r1;r<=r2;r++) for(let c=c1;c<=c2;c++){
+        if(String(resolveCell(r,c,grid,maxR,maxC,depth)).toUpperCase()===lookVal)
+          return r1===r2?c-c1+1:r-r1+1;
+      }
+      return '#N/A';
+    }
+    case 'CHOOSE': {
+      const parts=splitArgs(argsRaw);
+      const idx=+evalExpr(parts[0],grid,maxR,maxC,depth);
+      return idx>=1&&idx<parts.length?evalExpr(parts[idx],grid,maxR,maxC,depth):'#VALUE!';
+    }
+    case 'ROW':    return n0||0;
+    case 'COLUMN': return n0||0;
+    case 'ROWS':   return Array.isArray(a0)?Math.sqrt(a0.length)||1:1;
+    case 'COLUMNS':return Array.isArray(a0)?Math.sqrt(a0.length)||1:1;
+    case 'OFFSET': return n0; // simplified — full implementation needs range context
+
+    // ── TEXT ─────────────────────────────────────
+    case 'LEN':        return String(a0??'').length;
+    case 'LEFT':       return String(a0??'').slice(0, n1||1);
+    case 'RIGHT':      return String(a0??'').slice(-Math.max(1,n1||1));
+    case 'MID':        return String(a0??'').slice(n1-1, n1-1+(n2||1));
+    case 'UPPER':      return String(a0??'').toUpperCase();
+    case 'LOWER':      return String(a0??'').toLowerCase();
+    case 'PROPER':     return String(a0??'').replace(/\b\w/g,c=>c.toUpperCase()).replace(/\B\w/g,c=>c.toLowerCase());
+    case 'TRIM':       return String(a0??'').trim().replace(/\s+/g,' ');
+    case 'CLEAN':      return String(a0??'').replace(/[\x00-\x1F]/g,'');
+    case 'REPT':       return String(a0??'').repeat(Math.max(0,n1));
+    case 'CONCATENATE':
+    case 'CONCAT':     return args.map(v=>Array.isArray(v)?v.join(''):String(v===null||v===undefined?'':v)).join('');
+    case 'TEXTJOIN': {
+      const parts=splitArgs(argsRaw);
+      const delim=String(evalExpr(parts[0],grid,maxR,maxC,depth));
+      const skipEmpty=evalExpr(parts[1],grid,maxR,maxC,depth);
+      const vals=args.slice(2).flatMap(a=>Array.isArray(a)?a:[a]).map(String);
+      return (skipEmpty?vals.filter(v=>v!==''):vals).join(delim);
+    }
+    case 'SUBSTITUTE': {
+      const parts=splitArgs(argsRaw);
+      const text=String(evalExpr(parts[0],grid,maxR,maxC,depth));
+      const oldT=String(evalExpr(parts[1],grid,maxR,maxC,depth));
+      const newT=String(evalExpr(parts[2],grid,maxR,maxC,depth));
+      return text.split(oldT).join(newT);
+    }
+    case 'REPLACE': {
+      // REPLACE(old_text, start, num_chars, new_text)
+      const text=String(a0??'');
+      return text.slice(0,n1-1)+String(args[3]??'')+text.slice(n1-1+n2);
+    }
+    case 'FIND': {
+      const idx=String(a1??'').indexOf(String(a0??''));
+      return idx===-1?'#VALUE!':idx+1;
+    }
+    case 'SEARCH': {
+      const idx=String(a1??'').toLowerCase().indexOf(String(a0??'').toLowerCase());
+      return idx===-1?'#VALUE!':idx+1;
+    }
+    case 'TEXT': {
+      // TEXT(value, format) — basic implementation
+      const val=+a0||0, fmt=String(a1??'');
+      if(fmt.includes('%')) return (val*100).toFixed(fmt.match(/\.(\d+)/)?.[1]?.length||0)+'%';
+      if(fmt.includes('0.00')) return val.toFixed(2);
+      if(fmt.includes('#,##0')) return val.toLocaleString('en-US');
+      if(fmt.includes('$')) return '$'+val.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});
+      return String(val);
+    }
+    case 'VALUE':    return isNaN(+a0)?'#VALUE!':+a0;
+    case 'FIXED':    return n0.toFixed(n1||2);
+    case 'DOLLAR':   return '$'+(+n0).toLocaleString('en-US',{minimumFractionDigits:n1||2,maximumFractionDigits:n1||2});
+    case 'NUMBERVALUE': return +String(a0??'').replace(/[^0-9.\-]/g,'');
+    case 'EXACT':    return String(a0)===String(a1)?1:0;
+    case 'CHAR':     return String.fromCharCode(n0);
+    case 'CODE':     return String(a0??'').charCodeAt(0)||'#VALUE!';
+
+    // ── DATE & TIME ──────────────────────────────
+    case 'TODAY':   return new Date().toLocaleDateString('en-US');
+    case 'NOW':     return new Date().toLocaleString('en-US');
+    case 'YEAR':    return new Date(a0).getFullYear()||'#VALUE!';
+    case 'MONTH':   return (new Date(a0).getMonth()+1)||'#VALUE!';
+    case 'DAY':     return new Date(a0).getDate()||'#VALUE!';
+    case 'HOUR':    return new Date(a0).getHours();
+    case 'MINUTE':  return new Date(a0).getMinutes();
+    case 'SECOND':  return new Date(a0).getSeconds();
+    case 'DATE': {
+      const d=new Date(n0,n1-1,n2);
+      return d.toLocaleDateString('en-US');
+    }
+    case 'DATEDIF': {
+      const d1=new Date(a0),d2=new Date(a1),unit=String(a2||'D').toUpperCase();
+      const ms=d2-d1;
+      if(unit==='D') return Math.floor(ms/86400000);
+      if(unit==='M') return (d2.getFullYear()-d1.getFullYear())*12+(d2.getMonth()-d1.getMonth());
+      if(unit==='Y') return d2.getFullYear()-d1.getFullYear();
+      return Math.floor(ms/86400000);
+    }
+    case 'DAYS':    return Math.round((new Date(a0)-new Date(a1))/86400000);
+    case 'WEEKDAY': { const d=new Date(a0); return isNaN(d)?'#VALUE!':d.getDay()+1; }
+    case 'NETWORKDAYS': {
+      let d1=new Date(a0),d2=new Date(a1),count=0;
+      while(d1<=d2){const dow=d1.getDay();if(dow!==0&&dow!==6)count++;d1.setDate(d1.getDate()+1);}
+      return count;
+    }
+    case 'EOMONTH': {
+      const d=new Date(a0);
+      return new Date(d.getFullYear(),d.getMonth()+1+n1,0).toLocaleDateString('en-US');
+    }
+
+    // ── INFO ─────────────────────────────────────
+    case 'NA':      return '#N/A';
+    case 'N':       return typeof a0==='number'?a0:0;
+    case 'T':       return typeof a0==='string'?a0:'';
+    case 'TYPE':    return typeof a0==='number'?1:(typeof a0==='string'?2:(typeof a0==='boolean'?4:16));
+    case 'CELL':    return 'unsupported';
+    case 'INFO':    return 'unsupported';
+    case 'ERROR_TYPE': {
+      const errs={'#NULL!':1,'#DIV/0!':2,'#VALUE!':3,'#REF!':4,'#NAME?':5,'#NUM!':6,'#N/A':7};
+      return errs[String(a0)]||'#N/A';
+    }
+
+    default: return '#NAME?';
+  }
+}
+
+// ── HELPERS ──────────────────────────────────────────────
+function matchCriteria(val, crit) {
+  crit = String(crit).trim();
+  const numV = typeof val==='number'?val:+val;
+  if(crit.startsWith('>=')) return numV>=+crit.slice(2);
+  if(crit.startsWith('<=')) return numV<=+crit.slice(2);
+  if(crit.startsWith('<>')) return String(val).toUpperCase()!==crit.slice(2);
+  if(crit.startsWith('>'))  return numV>+crit.slice(1);
+  if(crit.startsWith('<'))  return numV<+crit.slice(1);
+  if(crit.includes('*')||crit.includes('?')) {
+    const re=new RegExp('^'+crit.replace(/\*/g,'.*').replace(/\?/g,'.')+'$','i');
+    return re.test(String(val));
+  }
+  return String(val).toUpperCase()===crit;
+}
+
+function erf(x) {
+  // Abramowitz and Stegun approximation
+  const t=1/(1+0.3275911*Math.abs(x));
+  const y=1-((((1.061405429*t-1.453152027)*t)+1.421413741)*t-0.284496736)*t*0.254829592*Math.exp(-x*x);
+  return x>=0?y:-y;
+}
+
+// ════════════════════════════════════════════════════════
+//  SHEET OBJECT — CORE
+// ════════════════════════════════════════════════════════
+function createSheetObject(data, name, x, y, w, h, _unused1, _unused2, originalFile) {
+  const id = 'sobj_' + (nextObjId++);
+  const ROWS = Math.max(data.length, 20);
+  const COLS = Math.max(data[0] ? data[0].length : 0, 8);
+
+  // Normalize grid to ROWS x COLS
+  const grid = [];
+  for (let r = 0; r < ROWS; r++) {
+    grid[r] = [];
+    for (let c = 0; c < COLS; c++) {
+      const v = data[r] && data[r][c] !== undefined ? data[r][c] : '';
+      grid[r][c] = v;
+    }
+  }
+
+  const colWidths = Array(COLS).fill(100);
+  const obj = { id, grid, name, x, y, w: w||520, h: h||320, locked: false, selectedCell: [0,0], colWidths, originalFile: originalFile || null };
+  sheetObjects.push(obj);
+
+  const el = buildSheetDOM(obj);
+  document.getElementById('canvas-area').appendChild(el);
+  positionObj(obj);
+  updateObjCount();
+  hideImportZone();
+  return obj;
+}
+
+function buildSheetDOM(obj) {
+  const el = document.createElement('div');
+  el.className = 'sheet-obj';
+  el.id = obj.id;
+  el.style.width = obj.w + 'px';
+  el.style.height = obj.h + 'px';
+
+  // Header
+  const hdr = document.createElement('div');
+  hdr.className = 'sheet-header';
+  hdr.innerHTML = `
+    <svg class="sheet-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="3" y1="15" x2="21" y2="15"/><line x1="9" y1="3" x2="9" y2="21"/></svg>
+    <span class="sheet-name">${escHtml(obj.name)}</span>
+    <div class="obj-controls">
+      <button class="obj-ctrl-btn fit-btn" title="Auto-fit all columns to content" onclick="autoFitAllCols('${obj.id}')">
+        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="15 3 21 3 21 9"/><polyline points="9 21 3 21 3 15"/><line x1="21" y1="3" x2="14" y2="10"/><line x1="3" y1="21" x2="10" y2="14"/></svg>
+        Fit
+      </button>
+      <button class="obj-ctrl-btn" title="Expand table to fill more space" onclick="expandObj('${obj.id}')">
+        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><polyline points="9 3 3 3 3 9"/><polyline points="15 3 21 3 21 9"/><polyline points="9 21 3 21 3 15"/><polyline points="15 21 21 21 21 15"/></svg>
+      </button>
+      <button class="obj-ctrl-btn" title="Lock position" onclick="toggleObjLock('${obj.id}')">
+        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+      </button>
+      <button class="obj-ctrl-btn" title="Duplicate" onclick="duplicateObj('${obj.id}')">
+        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+      </button>
+      <button class="obj-ctrl-btn" title="Export this table" onclick="exportObjToXLSX('${obj.id}')">
+        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+      </button>
+      <button class="obj-ctrl-btn danger" title="Remove" onclick="removeObj('${obj.id}')" style="color:var(--red)">
+        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+      </button>
+    </div>
+  `;
+  el.appendChild(hdr);
+
+  // Formula bar
+  const fbar = document.createElement('div');
+  fbar.className = 'sheet-formula-bar';
+  fbar.innerHTML = `<span class="cell-ref" id="${obj.id}_ref">A1</span><input class="formula-input" id="${obj.id}_fbar" placeholder="Enter value or =formula">`;
+  el.appendChild(fbar);
+
+  // Table body
+  const body = document.createElement('div');
+  body.className = 'sheet-body';
+  body.id = obj.id + '_body';
+  body.appendChild(buildTable(obj));
+  el.appendChild(body);
+
+  // ── Export footer bar ──
+  const exportBar = document.createElement('div');
+  exportBar.className = 'sheet-export-bar';
+  exportBar.id = obj.id + '_exportbar';
+  exportBar.innerHTML = `
+    <span class="export-bar-label" id="${obj.id}_exportlabel">
+      ${obj.originalFile ? '📄 ' + escHtml(obj.originalFile) : '📊 ' + escHtml(obj.name)}
+    </span>
+    <button class="export-bar-btn" onclick="exportObjToXLSX('${obj.id}')" title="Export this table to Excel">
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+      Export .xlsx
+    </button>
+    <button class="export-bar-btn primary" onclick="exportObjAndOpen('${obj.id}')" title="Export and open immediately">
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
+      Save &amp; Open
+    </button>
+  `;
+  el.appendChild(exportBar);
+
+  // Resize handle
+  const rh = document.createElement('div');
+  rh.className = 'resize-handle';
+  el.appendChild(rh);
+
+  // Drag on header
+  hdr.addEventListener('pointerdown', e => {
+    if (mode !== 'select') return;
+    if (e.target.closest('.obj-controls')) return;
+    if (obj.locked) return;
+    e.preventDefault();
+    e.stopPropagation();
+    startObjDrag(e, obj);
+  });
+
+  // Resize
+  rh.addEventListener('pointerdown', e => {
+    if (mode !== 'select') return;
+    e.preventDefault();
+    e.stopPropagation();
+    startObjResize(e, obj);
+  });
+
+  // Click to select
+  el.addEventListener('pointerdown', e => {
+    if (mode !== 'select') return;
+    selectObj(obj);
+  });
+
+  // Formula bar
+  const fbarInput = fbar.querySelector('.formula-input');
+  fbarInput.addEventListener('keydown', e => {
+    if (e.key === 'Enter') {
+      const [r,c] = obj.selectedCell;
+      setCellValue(obj, r, c, fbarInput.value);
+      e.preventDefault();
+    }
+    if (e.key === 'Escape') { fbarInput.blur(); }
+  });
+  fbarInput.addEventListener('input', () => {
+    // Mirror formula-bar edits into an activeEditor-like state so cell picking works
+    if (fbarInput.value.startsWith('=')) {
+      if (!editorState) editorState = { obj, r: obj.selectedCell[0], c: obj.selectedCell[1], pickMode: true };
+      activeEditor = fbarInput;
+      updatePickModeStatus();
+    } else {
+      if (activeEditor === fbarInput) { activeEditor = null; editorState = null; }
+    }
+  });
+  fbarInput.addEventListener('focus', () => {
+    selectObj(obj);
+    if (fbarInput.value.startsWith('=')) {
+      if (!editorState) editorState = { obj, r: obj.selectedCell[0], c: obj.selectedCell[1], pickMode: true };
+      activeEditor = fbarInput;
+      updatePickModeStatus();
+    }
+  });
+  fbarInput.addEventListener('blur', () => {
+    setTimeout(() => {
+      if (activeEditor === fbarInput && editorState && editorState.pickMode) {
+        try { fbarInput.focus(); } catch(e) {} // keep focus during cell picking
+      }
+    }, 150);
+  });
+
+  return el;
+}
+
+function buildTable(obj) {
+  const ROWS = obj.grid.length;
+  const COLS = obj.grid[0].length;
+
+  const table = document.createElement('table');
+  table.className = 'sheet-table';
+  table.id = obj.id + '_table';
+
+  // Ensure colWidths array matches COLS
+  if (!obj.colWidths || obj.colWidths.length !== COLS) {
+    obj.colWidths = Array(COLS).fill(100);
+  }
+
+  // Col widths
+  const colgroup = document.createElement('colgroup');
+  const rowHdrCol = document.createElement('col');
+  rowHdrCol.style.width = '36px';
+  colgroup.appendChild(rowHdrCol);
+  for (let c = 0; c < COLS; c++) {
+    const col = document.createElement('col');
+    col.id = obj.id + '_col_' + c;
+    col.style.width = (obj.colWidths[c] || 100) + 'px';
+    colgroup.appendChild(col);
+  }
+  table.appendChild(colgroup);
+
+  // Header row
+  const thead = document.createElement('thead');
+  const hrw = document.createElement('tr');
+  const corner = document.createElement('th');
+  corner.className = 'corner-cell col-header';
+  hrw.appendChild(corner);
+  for (let c = 0; c < COLS; c++) {
+    const th = document.createElement('th');
+    th.className = 'col-header';
+    th.textContent = colName(c);
+    th.style.width = (obj.colWidths[c] || 100) + 'px';
+
+    // Column resize grip
+    const grip = document.createElement('div');
+    grip.className = 'col-resize-grip';
+    grip.title = 'Drag to resize · Double-tap to auto-fit';
+    grip.addEventListener('pointerdown', e => {
+      e.stopPropagation(); e.preventDefault();
+      grip.classList.add('dragging');
+      grip.setPointerCapture(e.pointerId);
+      const startX = e.clientX;
+      const startW = obj.colWidths[c] || 100;
+      const onMove = ev => {
+        const newW = Math.max(40, startW + (ev.clientX - startX));
+        obj.colWidths[c] = newW;
+        const colEl = document.getElementById(obj.id + '_col_' + c);
+        if (colEl) colEl.style.width = newW + 'px';
+        th.style.width = newW + 'px';
+      };
+      const onUp = () => {
+        grip.classList.remove('dragging');
+        document.removeEventListener('pointermove', onMove);
+        document.removeEventListener('pointerup', onUp);
+      };
+      document.addEventListener('pointermove', onMove);
+      document.addEventListener('pointerup', onUp);
+    });
+    // Double-click grip = auto-fit that column
+    grip.addEventListener('dblclick', e => { e.stopPropagation(); autoFitCol(obj, c); });
+
+    // Touch double-tap on grip
+    let gripTap = 0;
+    grip.addEventListener('touchend', e => {
+      const now = Date.now();
+      if (now - gripTap < 300) { e.stopPropagation(); autoFitCol(obj, c); }
+      gripTap = now;
+    });
+
+    th.appendChild(grip);
+
+    // Right-click on col header → context menu
+    th.addEventListener('contextmenu', e => {
+      e.preventDefault(); e.stopPropagation();
+      openCtxMenu(e.clientX, e.clientY, obj, null, c);
+    });
+
+    hrw.appendChild(th);
+  }
+  thead.appendChild(hrw);
+  table.appendChild(thead);
+
+  // Body
+  const tbody = document.createElement('tbody');
+  for (let r = 0; r < ROWS; r++) {
+    const tr = document.createElement('tr');
+    const rowHdr = document.createElement('th');
+    rowHdr.className = 'row-header';
+    rowHdr.textContent = r + 1;
+    // Right-click on row header → context menu
+    rowHdr.addEventListener('contextmenu', e => {
+      e.preventDefault(); e.stopPropagation();
+      openCtxMenu(e.clientX, e.clientY, obj, r, null);
+    });
+    tr.appendChild(rowHdr);
+
+    for (let c = 0; c < COLS; c++) {
+      const td = document.createElement('td');
+      td.dataset.r = r;
+      td.dataset.c = c;
+      const raw = obj.grid[r][c];
+      renderCell(td, raw, obj, r, c);
+
+      td.addEventListener('pointerdown', e => {
+        if (mode !== 'select') return;
+        e.stopPropagation();
+        // FORMULA MODE — prevent blur, pick the cell as a reference
+        if (activeEditor && editorState && activeEditor.value.startsWith('=')) {
+          e.preventDefault();  // stops blur firing on the editor
+          editorState.pickMode = true;
+          touchDidInsert = true; // tell touchend not to fire again
+          startFormulaRangeDrag(e, obj, r, c, td);
+          setTimeout(() => { if (activeEditor) activeEditor.focus(); }, 30);
+          return;
+        }
+        selectObj(obj);
+        selectCell(obj, r, c);
+      });
+
+      // Long-press on touch = additive pick (like Ctrl+tap on desktop)
+      let longPressTimer = null;
+      let touchDidInsert = false; // guard: pointerdown already inserted ref, touchend must not repeat
+      td.addEventListener('touchstart', e => {
+        touchDidInsert = false;
+        if (!activeEditor || !editorState || !activeEditor.value.startsWith('=')) return;
+        longPressTimer = setTimeout(() => {
+          longPressTimer = null;
+          if (navigator.vibrate) navigator.vibrate(40);
+          touchDidInsert = true;
+          insertFormulaRange(obj, r, c, r, c, true, false);
+        }, 500);
+      }, {passive:true});
+      td.addEventListener('touchmove', () => {
+        if (longPressTimer) { clearTimeout(longPressTimer); longPressTimer = null; }
+      });
+      td.addEventListener('dblclick', e => {
+        if (mode !== 'select') return;
+        e.stopPropagation();
+        openEditor(obj, td, r, c);
+      });
+      // Single touchend handler — handles both long-press cancel and double-tap
+      let lastTap = 0;
+      td.addEventListener('touchend', e => {
+        // Cancel long-press timer if still pending
+        if (longPressTimer) { clearTimeout(longPressTimer); longPressTimer = null; }
+        // If pointerdown already handled formula insert, don't fire again
+        if (touchDidInsert) { touchDidInsert = false; return; }
+        // Double-tap to open editor (only when NOT in formula mode)
+        if (!activeEditor || !editorState || !activeEditor.value.startsWith('=')) {
+          const now = Date.now();
+          if (now - lastTap < 300) { openEditor(obj, td, r, c); }
+          lastTap = now;
+        }
+      });
+      // Right-click on cell → context menu
+      td.addEventListener('contextmenu', e => {
+        e.preventDefault(); e.stopPropagation();
+        selectCell(obj, r, c);
+        openCtxMenu(e.clientX, e.clientY, obj, r, c);
+      });
+      tr.appendChild(td);
+    }
+    tbody.appendChild(tr);
+  }
+  table.appendChild(tbody);
+  return table;
+}
+
+function renderCell(td, raw, obj, r, c) {
+  let display = raw;
+  let isFormula = false;
+  let isNum = false;
+  let isErr = false;
+
+  if (typeof raw === 'string' && raw.startsWith('=')) {
+    isFormula = true;
+    display = evalFormula(raw, obj.grid, obj.grid.length, obj.grid[0].length);
+  }
+
+  if (typeof display === 'number') {
+    isNum = true;
+    display = formatNumber(display, raw);
+  } else if (typeof display === 'string' && display.startsWith('#')) {
+    isErr = true;
+  }
+
+  td.textContent = display === null || display === undefined ? '' : display;
+  td.className = (isNum ? 'num' : '') + (isFormula ? ' formula-cell' : '') + (isErr ? ' error-cell' : '');
+}
+
+function formatNumber(n, raw) {
+  if (!isFinite(n)) return '#NUM!';
+  // Detect format hints from raw formula / value
+  const s = String(raw || '');
+  if (s.includes('%') || (n < 1 && n > -1 && n !== 0 && !s.includes('='))) {
+    return (n * 100).toFixed(1) + '%';
+  }
+  // Currency hint
+  if (Math.abs(n) >= 1000) return n.toLocaleString('en-US', {minimumFractionDigits:0,maximumFractionDigits:2});
+  return +n.toFixed(4) == Math.round(n) ? Math.round(n) : +n.toFixed(2);
+}
+
+function rebuildTable(obj) {
+  const body = document.getElementById(obj.id + '_body');
+  if (!body) return;
+  const old = document.getElementById(obj.id + '_table');
+  if (old) old.remove();
+  body.appendChild(buildTable(obj));
+  if (obj.selectedCell) highlightCell(obj, obj.selectedCell[0], obj.selectedCell[1]);
+}
+
+// Paint single cell OR a range onto the table.
+// obj.selectedCell  = [r, c]          — anchor (always set)
+// obj.selectionEnd  = [r2, c2] | null — drag/shift end
+function applySelectionHighlight(obj) {
+  const table = document.getElementById(obj.id + '_table');
+  if (!table) return;
+  const tbody = table.querySelector('tbody');
+  if (!tbody) return;
+
+  // Clear previous
+  table.querySelectorAll('td.sel, td.sel-range').forEach(el => {
+    el.classList.remove('sel', 'sel-range');
+  });
+
+  const [ar, ac] = obj.selectedCell || [0, 0];
+  const end = obj.selectionEnd;
+
+  if (!end || (end[0] === ar && end[1] === ac)) {
+    // Single cell
+    const row = tbody.rows[ar];
+    if (row) {
+      const td = row.cells[ac + 1];
+      if (td) td.classList.add('sel');
+    }
+  } else {
+    // Range
+    const r1 = Math.min(ar, end[0]), r2 = Math.max(ar, end[0]);
+    const c1 = Math.min(ac, end[1]), c2 = Math.max(ac, end[1]);
+    for (let r = r1; r <= r2; r++) {
+      const row = tbody.rows[r];
+      if (!row) continue;
+      for (let c = c1; c <= c2; c++) {
+        const td = row.cells[c + 1];
+        if (!td) continue;
+        // Anchor cell gets the solid border; rest get the tint
+        td.classList.add(r === ar && c === ac ? 'sel' : 'sel-range');
+      }
+    }
+  }
+}
+
+function highlightCell(obj, r, c) {
+  obj.selectionEnd = null;
+  applySelectionHighlight(obj);
+}
+
+function selectCell(obj, r, c, extendRange) {
+  if (extendRange && obj.selectedCell) {
+    obj.selectionEnd = [r, c];
+  } else {
+    obj.selectedCell = [r, c];
+    obj.selectionEnd = null;
+  }
+  applySelectionHighlight(obj);
+
+  // Formula bar — show anchor cell contents
+  const [ar, ac] = obj.selectedCell;
+  const ref  = document.getElementById(obj.id + '_ref');
+  const fbar = document.getElementById(obj.id + '_fbar');
+  const end  = obj.selectionEnd;
+
+  if (ref) {
+    if (end && (end[0] !== ar || end[1] !== ac)) {
+      const r1=Math.min(ar,end[0]),c1=Math.min(ac,end[1]);
+      const r2=Math.max(ar,end[0]),c2=Math.max(ac,end[1]);
+      ref.textContent = colName(c1)+(r1+1)+':'+colName(c2)+(r2+1);
+    } else {
+      ref.textContent = colName(ac) + (ar + 1);
+    }
+  }
+  if (fbar) {
+    const v = obj.grid[ar][ac];
+    fbar.value = (v !== null && v !== undefined) ? v : '';
+  }
+
+  updateSumDisplay(obj);
+}
+
+function updateSumDisplay(obj) {
+  const sumEl = document.getElementById('sum-display');
+  if (!sumEl) return;
+  const [ar, ac] = obj.selectedCell || [0, 0];
+  const end = obj.selectionEnd;
+
+  if (!end || (end[0] === ar && end[1] === ac)) {
+    // Single cell
+    const raw = obj.grid[ar] && obj.grid[ar][ac];
+    let val = raw;
+    if (typeof raw === 'string' && raw.startsWith('=')) {
+      val = evalFormula(raw, obj.grid, obj.grid.length, obj.grid[0].length);
+    }
+    if (typeof val === 'number' && isFinite(val)) {
+      sumEl.style.display = '';
+      sumEl.textContent = colName(ac)+(ar+1)+': '+val.toLocaleString('en-US',{maximumFractionDigits:6});
+    } else {
+      sumEl.style.display = 'none';
+    }
+  } else {
+    // Range — show Count, Sum, Average
+    const r1=Math.min(ar,end[0]), r2=Math.max(ar,end[0]);
+    const c1=Math.min(ac,end[1]), c2=Math.max(ac,end[1]);
+    const nums = [];
+    for (let r=r1; r<=r2; r++) for (let c=c1; c<=c2; c++) {
+      let v = obj.grid[r] && obj.grid[r][c];
+      if (typeof v === 'string' && v.startsWith('=')) v = evalFormula(v, obj.grid, obj.grid.length, obj.grid[0].length);
+      if (typeof v === 'number' && isFinite(v)) nums.push(v);
+    }
+    const total = (r2-r1+1)*(c2-c1+1);
+    if (nums.length > 0) {
+      const sum = nums.reduce((a,b)=>a+b,0);
+      const avg = sum/nums.length;
+      sumEl.style.display = '';
+      sumEl.textContent =
+        'Count: '+total+
+        '  Sum: '+sum.toLocaleString('en-US',{maximumFractionDigits:4})+
+        '  Avg: '+avg.toLocaleString('en-US',{maximumFractionDigits:4});
+    } else {
+      sumEl.style.display = '';
+      sumEl.textContent = 'Count: '+total;
+    }
+  }
+}
+
+function setCellValue(obj, r, c, val) {
+  // Parse number if looks like one (guard: val may already be a number)
+  if (typeof val === 'string' && val !== '' && !val.startsWith('=') && !isNaN(+val)) val = +val;
+  obj.grid[r][c] = val;
+  rebuildTable(obj);
+  selectCell(obj, r, c);
+}
+
+// ════════════════════════════════════════════════════════
+//  INLINE CELL EDITOR  (with formula cell-picking)
+// ════════════════════════════════════════════════════════
+
+// Track which obj+cell is currently being edited
+let editorState = null;   // { obj, r, c, pickMode }
+
+function isPickMode() {
+  if (!activeEditor || !editorState) return false;
+  const v = activeEditor.value;
+  // In pick mode if value starts with = and we're not right after an operator/paren
+  if (!v.startsWith('=')) return false;
+  // After typing = or after an operator character, clicks should insert refs
+  // Exit pick mode if cursor is right after a letter+digit (mid-ref) — let that stay
+  const last = v.slice(-1);
+  return v.length === 1 || /[+\-*/,(=<>]/.test(last);
+}
+
+function openEditor(obj, td, r, c) {
+  closeEditor();
+  selectObj(obj);
+  const rect = td.getBoundingClientRect();
+  const bodyRect = document.getElementById('canvas-area').getBoundingClientRect();
+
+  const ed = document.createElement('input');
+  ed.className = 'cell-editor';
+  const rawVal = obj.grid[r][c] !== null && obj.grid[r][c] !== undefined ? obj.grid[r][c] : '';
+  ed.value = rawVal;
+  ed.style.left = (rect.left - bodyRect.left) + 'px';
+  ed.style.top = (rect.top - bodyRect.top) + 'px';
+  ed.style.width = Math.max(rect.width, 160) + 'px';
+  ed.style.height = rect.height + 'px';
+  ed.style.lineHeight = rect.height + 'px';
+
+  editorState = { obj, r, c };
+
+  function commit(moveDir) {
+    const val = ed.value;
+    // Remove any lingering pick-highlight
+    clearPickHighlight();
+    setCellValue(obj, r, c, val);
+    closeEditor();
+    if (moveDir === 'tab') {
+      const nc = Math.min(c + 1, obj.grid[0].length - 1);
+      selectCell(obj, r, nc);
+    } else if (moveDir === 'enter') {
+      const nr = Math.min(r + 1, obj.grid.length - 1);
+      selectCell(obj, nr, c);
+    }
+  }
+
+  ed.addEventListener('keydown', e => {
+    if (e.key === 'Enter') { e.preventDefault(); commit('enter'); return; }
+    if (e.key === 'Tab')   { e.preventDefault(); commit('tab');   return; }
+    if (e.key === 'Escape') { clearPickHighlight(); closeEditor(); return; }
+    // Arrow keys while in formula mode — let them move through formula text, not cells
+    e.stopPropagation();
+  });
+
+  ed.addEventListener('input', () => {
+    updatePickModeStatus();
+    // Widen editor if content is long
+    const approxW = Math.max(rect.width, ed.value.length * 8 + 20, 160);
+    ed.style.width = approxW + 'px';
+  });
+
+  ed.addEventListener('blur', () => {
+    // Give a generous delay so pointerdown on a cell can fire first and
+    // set editorState.pickMode = true before we decide whether to commit.
+    // If we're in formula pick mode, NEVER commit on blur — the user is
+    // tapping cells to build their formula.
+    setTimeout(() => {
+      if (activeEditor !== ed) return;       // already closed by Enter/Tab/Esc
+      if (!editorState) return;
+      if (editorState.pickMode) {
+        // Refocus the editor so typing continues to work
+        try { ed.focus(); } catch(e) {}
+        return;
+      }
+      const val = ed.value;
+      activeEditor = null;
+      editorState = null;
+      setCellValue(obj, r, c, val);
+      closeEditor();
+    }, 150);
+  });
+
+  document.getElementById('canvas-area').appendChild(ed);
+  activeEditor = ed;
+  editorState.pickMode = false;
+
+  setTimeout(() => {
+    ed.focus();
+    ed.setSelectionRange(ed.value.length, ed.value.length);
+  }, 10);
+
+  updatePickModeStatus();
+}
+
+function updatePickModeStatus() {
+  if (!activeEditor) return;
+  const inFormula = activeEditor.value.startsWith('=');
+  const badge = document.getElementById('mode-badge');
+  const msg   = document.getElementById('status-msg');
+  badge.className = 'status-badge badge-edit';
+  badge.textContent = inFormula ? 'Formula' : 'Editing';
+  if (inFormula) {
+    msg.innerHTML = '👆 <strong>Tap cells to add them</strong>  ·  <strong>Drag across a column for SUM range</strong>  ·  Tap then + then tap for individual adds  ·  Enter to confirm  ·  Esc to cancel';
+    editorState && (editorState.pickMode = true);
+  } else {
+    msg.textContent = 'Enter to confirm  ·  Tab = next cell  ·  Esc to cancel  ·  Type = to start a formula';
+    editorState && (editorState.pickMode = false);
+  }
+}
+
+// Called when a cell is tapped/clicked while an editor is open in formula mode
+// ════════════════════════════════════════════════════════
+//  FORMULA CELL / RANGE PICKING
+//  — single tap   → insert single ref  (B3)
+//  — drag         → insert range ref   (B3:B8)
+//  — Ctrl/Meta+tap or long-press → append with comma  (,K5)
+//  — Ctrl+drag    → append range with comma  (,K5:K8)
+// ════════════════════════════════════════════════════════
+
+let formulaDragState = null;   // { obj, anchorR, anchorC, curR, curC, additive }
+let pickHighlightEls = [];     // array so we can highlight multiple ranges
+
+// Called from cell pointerdown when formula editor is open
+function startFormulaRangeDrag(e, obj, r, c, td) {
+  if (!activeEditor || !editorState) return;
+  const additive = e.ctrlKey || e.metaKey || e.shiftKey;
+
+  // Track whether pointer actually moved to a different cell (real drag vs tap)
+  formulaDragState = { obj, anchorR: r, anchorC: c, curR: r, curC: c, additive, dragged: false };
+
+  // DO NOT insert anything yet — wait for pointerup (tap) or pointermove (drag)
+  // This prevents the double-insert where pointerdown+pointerup both call insertFormulaRange
+
+  td.setPointerCapture(e.pointerId);
+
+  const onMove = ev => {
+    const target = document.elementFromPoint(ev.clientX, ev.clientY);
+    if (!target) return;
+    const cell = target.closest('td[data-r]');
+    if (!cell) return;
+    const nr = +cell.dataset.r, nc = +cell.dataset.c;
+    if (nr === formulaDragState.anchorR && nc === formulaDragState.anchorC) return; // still on start cell
+    // Moved to a different cell — now it's a real drag
+    if (!formulaDragState.dragged) {
+      formulaDragState.dragged = true;
+      // Insert the anchor cell as start of range preview
+      insertFormulaRange(obj, formulaDragState.anchorR, formulaDragState.anchorC, nr, nc, additive, true);
+    }
+    if (nr === formulaDragState.curR && nc === formulaDragState.curC) return;
+    formulaDragState.curR = nr;
+    formulaDragState.curC = nc;
+    insertFormulaRange(obj, formulaDragState.anchorR, formulaDragState.anchorC, nr, nc, additive, true);
+  };
+
+  const onUp = () => {
+    if (formulaDragState) {
+      if (formulaDragState.dragged) {
+        // Real drag — commit the final range
+        insertFormulaRange(
+          formulaDragState.obj,
+          formulaDragState.anchorR, formulaDragState.anchorC,
+          formulaDragState.curR,   formulaDragState.curC,
+          formulaDragState.additive, false
+        );
+      } else {
+        // Simple tap — insert single cell ref ONCE here on pointerup
+        insertFormulaRange(obj, r, c, r, c, additive, false);
+      }
+      formulaDragState = null;
+    }
+    document.removeEventListener('pointermove', onMove);
+    document.removeEventListener('pointerup', onUp);
+  };
+
+  document.addEventListener('pointermove', onMove);
+  document.addEventListener('pointerup', onUp);
+}
+
+// Also called for plain tap (no drag) — startFormulaRangeDrag handles both
+function tryInsertCellRef(obj, r, c, additive) {
+  insertFormulaRange(obj, r, c, r, c, additive || false, false);
+}
+
+// Core function: build the ref string and splice it into the editor
+function insertFormulaRange(obj, r1, c1, r2, c2, additive, isPreview) {
+  if (!activeEditor || !editorState) return;
+  const v = activeEditor.value;
+  if (!v.startsWith('=')) return;
+
+  // Build the reference string
+  const minR = Math.min(r1,r2), maxR = Math.max(r1,r2);
+  const minC = Math.min(c1,c2), maxC = Math.max(c1,c2);
+  const isSingle = minR===maxR && minC===maxC;
+  const ref = isSingle
+    ? colName(minC) + (minR+1)
+    : colName(minC)+(minR+1)+':'+colName(maxC)+(maxR+1);
+
+  // Highlight selected cells
+  paintPickHighlight(obj, minR, minC, maxR, maxC, additive);
+
+  // ── SMART FORMULA BUILDING ──────────────────────────────
+  // Check what the formula looks like so far (after the =)
+  const body = v.slice(1); // everything after =
+  const isBareSoFar = body === '' || /^[A-Z]+\d+(:[A-Z]+\d+)?$/.test(body.trim());
+  // "bare" = user has just typed = with nothing else, or = plus one previous ref
+  const insideFunction = /[A-Z]+\(.*$/.test(body); // e.g. =SUM( or =IF(
+
+  let newVal;
+
+  if (additive) {
+    // Ctrl+tap / long-press → append with + sign (additive individual picks)
+    const stripped = stripLastCommaRef(v);
+    const base = isPreview ? stripped : v;
+    const needsPlus = /[\w\d\)]$/.test(base) && !base.endsWith('(');
+    newVal = base + (needsPlus ? '+' : '') + ref;
+
+  } else if (insideFunction) {
+    // Inside a function like =SUM( — just insert the ref normally
+    if (isPreview) {
+      const stripped = stripLastSingleRef(v);
+      newVal = stripped + ref;
+    } else {
+      const pos = activeEditor.selectionStart;
+      const before = v.slice(0, pos);
+      const after  = v.slice(pos);
+      const partialRef = before.match(/([A-Z]+\$?\d*:\$?[A-Z]*\$?\d*|[A-Z]+\$?\d*)$/);
+      newVal = partialRef
+        ? before.slice(0, before.length - partialRef[0].length) + ref + after
+        : before + ref + after;
+    }
+
+  } else if (!isSingle && isBareSoFar) {
+    // User dragged across multiple cells and formula is bare (just =)
+    // → auto-wrap with SUM()  e.g.  =SUM(D13:D19)
+    if (isPreview) {
+      newVal = '=SUM(' + ref + ')';
+    } else {
+      newVal = '=SUM(' + ref + ')';
+    }
+
+  } else if (isSingle && isBareSoFar && body === '') {
+    // First tap on a bare = → just insert the ref, let them decide
+    newVal = '=' + ref;
+
+  } else if (isSingle && /^[A-Z]+\d+$/.test(body.trim())) {
+    // Second tap (formula is =D13, now tapping D14) → join with +
+    if (isPreview) {
+      const stripped = stripLastSingleRef(v);
+      const needsPlus = /[\w\d]$/.test(stripped);
+      newVal = stripped + (needsPlus ? '+' : '') + ref;
+    } else {
+      const needsPlus = /[\w\d]$/.test(v) && !v.endsWith('(') && !v.endsWith('+') && !v.endsWith('-') && !v.endsWith('*') && !v.endsWith('/');
+      newVal = v + (needsPlus ? '+' : '') + ref;
+    }
+
+  } else {
+    // General case — append intelligently
+    if (isPreview) {
+      const stripped = stripLastSingleRef(v);
+      const needsOp = /[\w\d\)]$/.test(stripped) && !stripped.endsWith('(');
+      newVal = stripped + (needsOp ? '+' : '') + ref;
+    } else {
+      const pos = activeEditor.selectionStart;
+      const before = v.slice(0, pos);
+      const after  = v.slice(pos);
+      const partialRef = before.match(/([A-Z]+\$?\d*:\$?[A-Z]*\$?\d*|[A-Z]+\$?\d*)$/);
+      const cleaned = partialRef
+        ? before.slice(0, before.length - partialRef[0].length)
+        : before;
+      const needsOp = /[\w\d\)]$/.test(cleaned) && !cleaned.endsWith('(');
+      newVal = cleaned + (needsOp ? '+' : '') + ref + after;
+    }
+  }
+
+  activeEditor.value = newVal;
+  activeEditor.setSelectionRange(newVal.length, newVal.length);
+  activeEditor.focus();
+  updatePickModeStatus();
+}
+
+// Strip the last comma+ref we appended (for live preview update during drag)
+function stripLastCommaRef(v) {
+  return v.replace(/,?\$?[A-Z]+\$?\d+(:\$?[A-Z]+\$?\d+)?$/, '');
+}
+function stripLastSingleRef(v) {
+  return v.replace(/\$?[A-Z]+\$?\d+(:\$?[A-Z]+\$?\d+)?$/, '');
+}
+
+// Paint amber highlights on all picked cells/ranges
+function paintPickHighlight(obj, r1, c1, r2, c2, additive) {
+  if (!additive) clearPickHighlight();
+  const table = document.getElementById(obj.id + '_table');
+  if (!table) return;
+  const tbody = table.querySelector('tbody');
+  if (!tbody) return;
+
+  const colors = ['#fef9c3','#dbeafe','#dcfce7','#fce7f3','#ffedd5']; // cycle through for multiple picks
+  const colorIdx = pickHighlightEls.length % colors.length;
+  const bg = colors[colorIdx];
+  const border = additive ? '#1a6ef5' : '#d97706';
+
+  for (let r=r1; r<=r2; r++) {
+    if (!tbody.rows[r]) continue;
+    for (let c=c1; c<=c2; c++) {
+      const td = tbody.rows[r].cells[c+1];
+      if (!td) continue;
+      td.style.outline = '2px solid ' + border;
+      td.style.outlineOffset = '-2px';
+      td.style.background = bg;
+      pickHighlightEls.push(td);
+    }
+  }
+}
+
+function clearPickHighlight() {
+  pickHighlightEls.forEach(td => {
+    td.style.outline = '';
+    td.style.outlineOffset = '';
+    td.style.background = '';
+  });
+  pickHighlightEls = [];
+}
+
+let _closingEditor = false;
+function closeEditor() {
+  if (_closingEditor) return;
+  _closingEditor = true;
+  clearPickHighlight();
+  if (activeEditor) {
+    // Detach all listeners by cloning — prevents blur re-entry
+    const old = activeEditor;
+    activeEditor = null;
+    editorState = null;
+    if (old.parentNode) old.parentNode.removeChild(old);
+  } else {
+    editorState = null;
+  }
+  // Restore status bar text without calling setMode (which would recurse)
+  const msgs = {
+    select:'Drag tables, edit cells, or resize objects',
+    draw:'Draw freely — spreadsheets remain interactive underneath',
+    highlight:'Swipe to highlight areas in yellow',
+    erase:'Drag over drawings to erase annotations'
+  };
+  const badges = {select:'badge-select',draw:'badge-draw',highlight:'badge-hl',erase:'badge-erase'};
+  const badge = document.getElementById('mode-badge');
+  if (badge) {
+    badge.className = 'status-badge ' + (badges[mode] || 'badge-select');
+    badge.textContent = mode.charAt(0).toUpperCase() + mode.slice(1);
+  }
+  const msgEl = document.getElementById('status-msg');
+  if (msgEl) msgEl.textContent = msgs[mode] || '';
+  _closingEditor = false;
+}
+
+// ════════════════════════════════════════════════════════
+//  OBJECT SELECTION
+// ════════════════════════════════════════════════════════
+function selectObj(obj) {
+  if (selectedObj === obj) return;
+  if (selectedObj) {
+    const el = document.getElementById(selectedObj.id);
+    if (el) el.classList.remove('selected');
+  }
+  selectedObj = obj;
+  if (obj) {
+    const el = document.getElementById(obj.id);
+    if (el) el.classList.add('selected');
+  }
+}
+
+// ════════════════════════════════════════════════════════
+//  DRAG & RESIZE
+// ════════════════════════════════════════════════════════
+function startObjDrag(e, obj) {
+  if (mode !== 'select' || obj.locked) return;
+  selectObj(obj);
+  const area = document.getElementById('canvas-area').getBoundingClientRect();
+  const src = e.touches ? e.touches[0] : e;
+  dragState = {
+    obj,
+    startX: src.clientX,
+    startY: src.clientY,
+    origX: obj.x,
+    origY: obj.y
+  };
+  e.currentTarget.setPointerCapture(e.pointerId);
+  document.addEventListener('pointermove', onObjDrag);
+  document.addEventListener('pointerup', stopObjDrag);
+}
+
+function onObjDrag(e) {
+  if (!dragState) return;
+  e.preventDefault();
+  const dx = e.clientX - dragState.startX;
+  const dy = e.clientY - dragState.startY;
+  dragState.obj.x = Math.max(0, dragState.origX + dx);
+  dragState.obj.y = Math.max(0, dragState.origY + dy);
+  positionObj(dragState.obj);
+}
+
+function stopObjDrag() {
+  dragState = null;
+  document.removeEventListener('pointermove', onObjDrag);
+  document.removeEventListener('pointerup', stopObjDrag);
+}
+
+function startObjResize(e, obj) {
+  selectObj(obj);
+  const src = e.touches ? e.touches[0] : e;
+  resizeState = {
+    obj,
+    startX: src.clientX,
+    startY: src.clientY,
+    origW: obj.w,
+    origH: obj.h
+  };
+  e.currentTarget.setPointerCapture(e.pointerId);
+  document.addEventListener('pointermove', onObjResize);
+  document.addEventListener('pointerup', stopObjResize);
+}
+
+function onObjResize(e) {
+  if (!resizeState) return;
+  const dx = e.clientX - resizeState.startX;
+  const dy = e.clientY - resizeState.startY;
+  resizeState.obj.w = Math.max(280, resizeState.origW + dx);
+  resizeState.obj.h = Math.max(180, resizeState.origH + dy);
+  positionObj(resizeState.obj);
+}
+
+function stopObjResize() {
+  resizeState = null;
+  document.removeEventListener('pointermove', onObjResize);
+  document.removeEventListener('pointerup', stopObjResize);
+}
+
+function positionObj(obj) {
+  const el = document.getElementById(obj.id);
+  if (!el) return;
+  el.style.left = obj.x + 'px';
+  el.style.top = obj.y + 'px';
+  el.style.width = obj.w + 'px';
+  el.style.height = obj.h + 'px';
+}
+
+// ════════════════════════════════════════════════════════
+//  OBJECT OPERATIONS
+// ════════════════════════════════════════════════════════
+function toggleObjLock(id) {
+  const obj = sheetObjects.find(o => o.id === id);
+  if (!obj) return;
+  obj.locked = !obj.locked;
+  const el = document.getElementById(id);
+  if (el) el.classList.toggle('locked', obj.locked);
+  toast(obj.locked ? 'Table locked' : 'Table unlocked');
+}
+
+function duplicateObj(id) {
+  const obj = sheetObjects.find(o => o.id === id);
+  if (!obj) return;
+  const newGrid = obj.grid.map(row => [...row]);
+  createSheetObject(newGrid, obj.name + ' (copy)', obj.x + 30, obj.y + 30, obj.w, obj.h);
+  toast('Duplicated');
+}
+
+function removeObj(id) {
+  const el = document.getElementById(id);
+  if (el) el.remove();
+  sheetObjects = sheetObjects.filter(o => o.id !== id);
+  if (selectedObj && selectedObj.id === id) selectedObj = null;
+  updateObjCount();
+  if (sheetObjects.length === 0) showImportZone();
+}
+
+function updateObjCount() {
+  document.getElementById('obj-count').textContent =
+    sheetObjects.length + ' table' + (sheetObjects.length !== 1 ? 's' : '');
+}
+
+// ════════════════════════════════════════════════════════
+//  IMPORT
+// ════════════════════════════════════════════════════════
+function triggerImport() {
+  document.getElementById('file-input').click();
+}
+
+function handleFileSelect(e) {
+  const f = e.target.files[0];
+  if (!f) return;
+  e.target.value = '';
+  readFile(f);
+}
+
+// Drag-and-drop on the whole page
+document.addEventListener('dragover', e => { e.preventDefault(); e.dataTransfer.dropEffect = 'copy'; });
+document.addEventListener('dragenter', () => { document.getElementById('import-zone').classList.add('drag-over'); });
+document.addEventListener('dragleave', () => { document.getElementById('import-zone').classList.remove('drag-over'); });
+document.addEventListener('drop', e => {
+  e.preventDefault();
+  document.getElementById('import-zone').classList.remove('drag-over');
+  const f = e.dataTransfer.files[0];
+  if (f) readFile(f);
+});
+
+function readFile(file) {
+  const name = file.name.replace(/\.[^.]+$/, '');
+  const reader = new FileReader();
+  reader.onload = ev => {
+    try {
+      const data = new Uint8Array(ev.target.result);
+      const wb = XLSX.read(data, {type:'array', cellText:false, cellDates:true});
+      let xOffset = 40;
+      let yOffset = 60;
+      const placed = [];
+      wb.SheetNames.forEach((sname, idx) => {
+        const ws = wb.Sheets[sname];
+        const json = XLSX.utils.sheet_to_json(ws, {header:1, raw:false, defval:''});
+        if (!json || json.length === 0) return;
+
+        // Try to preserve formulas
+        const range = XLSX.utils.decode_range(ws['!ref'] || 'A1');
+        const gridData = [];
+        for (let r = range.s.r; r <= range.e.r; r++) {
+          gridData[r - range.s.r] = [];
+          for (let c = range.s.c; c <= range.e.c; c++) {
+            const addr = XLSX.utils.encode_cell({r,c});
+            const cell = ws[addr];
+            if (!cell) { gridData[r-range.s.r][c-range.s.c] = ''; continue; }
+            if (cell.f) {
+              gridData[r-range.s.r][c-range.s.c] = '=' + cell.f;
+            } else {
+              gridData[r-range.s.r][c-range.s.c] = cell.v !== undefined ? cell.v : '';
+            }
+          }
+        }
+
+        const obj = createSheetObject(gridData, name + (wb.SheetNames.length > 1 ? ' — ' + sname : ''),
+          xOffset + idx * 25, yOffset + idx * 30, 560, 340, null, null, file.name);
+        placed.push(sname);
+      });
+      toast('Imported ' + placed.length + ' sheet' + (placed.length !== 1 ? 's' : '') + ' from ' + file.name);
+      showUnsupportedWarning(file.name);
+    } catch(err) {
+      toast('Could not read file: ' + err.message);
+    }
+  };
+  reader.readAsArrayBuffer(file);
+}
+
+function showUnsupportedWarning(fname) {
+  // Non-modal inline warning
+  setTimeout(() => {
+    toast('Note: macros, pivot tables, and external links are not preserved on import');
+  }, 1500);
+}
+
+// ════════════════════════════════════════════════════════
+//  EXPORT
+// ════════════════════════════════════════════════════════
+function exportToXLSX() {
+  if (sheetObjects.length === 0) { toast('No tables to export'); return; }
+
+  // If only one table, export it with its original filename
+  if (sheetObjects.length === 1) {
+    exportObjToXLSX(sheetObjects[0].id);
+    return;
+  }
+
+  // Multiple tables — combine into one workbook
+  const wb = XLSX.utils.book_new();
+  let anyComplex = false;
+  const usedNames = {};
+
+  sheetObjects.forEach(obj => {
+    const { wb: singleWb, hasComplexFormulas } = buildExportWorkbook(obj);
+    if (hasComplexFormulas) anyComplex = true;
+    // Copy the sheet from single workbook into combined
+    const sheetName = singleWb.SheetNames[0];
+    let finalName = sheetName;
+    let n = 2;
+    while (usedNames[finalName]) { finalName = sheetName.slice(0,28) + '_' + n++; }
+    usedNames[finalName] = true;
+    wb.Sheets[finalName] = singleWb.Sheets[sheetName];
+    wb.SheetNames.push(finalName);
+  });
+
+  const filename = 'whiteboard-export.xlsx';
+  XLSX.writeFile(wb, filename);
+  toast('✓ Exported ' + sheetObjects.length + ' tables → ' + filename);
+  if (anyComplex) setTimeout(() => toast('⚠️ Some formulas may need recalculation in Excel (Ctrl+Alt+F9)'), 800);
+}
+
+function buildExportWorkbook(obj) {
+  const wb = XLSX.utils.book_new();
+  let hasComplexFormulas = false;
+
+  // Build sheet preserving formulas and evaluated values
+  const rows = obj.grid.length;
+  const cols = obj.grid[0] ? obj.grid[0].length : 0;
+
+  const ws = {};
+  let minR = 0, minC = 0, maxR = 0, maxC = 0;
+
+  for (let r = 0; r < rows; r++) {
+    for (let c = 0; c < cols; c++) {
+      const raw = obj.grid[r][c];
+      if (raw === '' || raw === null || raw === undefined) continue;
+      maxR = Math.max(maxR, r); maxC = Math.max(maxC, c);
+      const addr = XLSX.utils.encode_cell({r, c});
+
+      if (typeof raw === 'string' && raw.startsWith('=')) {
+        const fn = raw.toUpperCase();
+        if (/XLOOKUP|XMATCH|SORT\(|FILTER\(|UNIQUE\(|SEQUENCE\(/.test(fn)) hasComplexFormulas = true;
+        // Write formula + cached evaluated value so Excel shows correct number immediately
+        const evaluated = evalFormula(raw, obj.grid, rows, cols);
+        const cellObj = { t: typeof evaluated === 'number' ? 'n' : 's', f: raw.slice(1) };
+        if (typeof evaluated === 'number' && isFinite(evaluated)) cellObj.v = evaluated;
+        ws[addr] = cellObj;
+      } else if (typeof raw === 'number') {
+        ws[addr] = { t: 'n', v: raw };
+      } else if (typeof raw === 'string') {
+        // Try to detect currency/percentage strings and write as numbers
+        const stripped = raw.replace(/[$,%\s]/g, '');
+        if (!isNaN(+stripped) && stripped !== '') {
+          const num = raw.includes('%') ? +stripped / 100 : +stripped;
+          ws[addr] = { t: 'n', v: num, z: raw.includes('$') ? '"$"#,##0.00' : raw.includes('%') ? '0.00%' : 'General' };
+        } else {
+          ws[addr] = { t: 's', v: raw };
+        }
+      }
+    }
+  }
+
+  ws['!ref'] = XLSX.utils.encode_range({s:{r:minR,c:minC}, e:{r:maxR,c:maxC}});
+
+  // Set column widths from the app's colWidths
+  if (obj.colWidths) {
+    ws['!cols'] = obj.colWidths.map(w => ({ wch: Math.round(w / 7) }));
+  }
+
+  const safeName = obj.name.replace(/[\\/*?:\[\]]/g,'').slice(0,31) || 'Sheet1';
+  XLSX.utils.book_append_sheet(wb, ws, safeName);
+
+  return { wb, hasComplexFormulas, safeName };
+}
+
+function exportObjToXLSX(id) {
+  const obj = sheetObjects.find(o => o.id === id);
+  if (!obj) return;
+  const { wb, hasComplexFormulas, safeName } = buildExportWorkbook(obj);
+  // Use original filename if available, otherwise use table name
+  const filename = obj.originalFile || (safeName + '.xlsx');
+  XLSX.writeFile(wb, filename);
+  if (hasComplexFormulas) {
+    setTimeout(() => toast('⚠️ Some advanced formulas may need recalculation in Excel (Ctrl+Alt+F9)'), 400);
+  } else {
+    toast('✓ Exported — ' + filename);
+  }
+}
+
+// Export and immediately trigger open (browser downloads and some OS auto-open)
+function exportObjAndOpen(id) {
+  const obj = sheetObjects.find(o => o.id === id);
+  if (!obj) return;
+  const { wb, hasComplexFormulas, safeName } = buildExportWorkbook(obj);
+  const filename = obj.originalFile || (safeName + '.xlsx');
+  // Write as array buffer and open via blob URL so browser can auto-open
+  const wbout = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
+  const blob = new Blob([wbout], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(url), 5000);
+  toast('✓ Saved — ' + filename + (hasComplexFormulas ? ' (check formulas in Excel)' : ''));
+}
+
+function exportToPNG() {
+  toast('PNG: use Windows+Shift+S (Windows) or Cmd+Shift+4 (Mac) to capture the screen');
+}
+
+// ════════════════════════════════════════════════════════
+//  BLANK SHEET & DEMO
+// ════════════════════════════════════════════════════════
+function createBlankSheet() {
+  const rows = 20, cols = 8;
+  const grid = Array.from({length:rows}, () => Array(cols).fill(''));
+  createSheetObject(grid, 'New table', 60, 60, 520, 300);
+  toast('Blank table added');
+}
+
+function createDemoSheet() {
+  const data = [
+    ['Loan Analysis', '', '', '', '', ''],
+    ['', '', '', '', '', ''],
+    ['Input', 'Value', '', 'Output', 'Value', ''],
+    ['Loan amount ($)', 2500000, '', 'Monthly payment', '=B5*((B6/12)*(1+B6/12)^(B7*12))/((1+B6/12)^(B7*12)-1)', ''],
+    ['Annual rate (%)', 0.075, '', 'Total interest', '=E4*B7*12-B4', ''],
+    ['Term (years)', 25, '', 'Total paid', '=E4*B7*12', ''],
+    ['', '', '', '', '', ''],
+    ['Amortization Schedule', '', '', '', '', ''],
+    ['Year', 'Opening balance', 'Annual payment', 'Interest paid', 'Principal paid', 'Closing balance'],
+  ];
+  for (let yr = 1; yr <= 10; yr++) {
+    const r = 9 + yr - 1;
+    const openRef = yr === 1 ? 'B4' : `F${r}`;
+    data.push([
+      yr,
+      yr === 1 ? '=B4' : `=F${r}`,
+      `=E4*12`,
+      `=${openRef}*B6`,
+      `=E4*12-${openRef}*B6`,
+      `=${openRef}-(E4*12-${openRef}*B6)`,
+    ]);
+  }
+  createSheetObject(data, 'Loan Analysis', 60, 50, 700, 400);
+
+  // Second table: cash flow
+  const cf = [
+    ['Project Cash Flow', '', '', '', ''],
+    ['', 'Q1', 'Q2', 'Q3', 'Q4'],
+    ['Revenue', 480000, 520000, 610000, 690000],
+    ['Cost of sales', '=B3*0.45', '=C3*0.45', '=D3*0.45', '=E3*0.45'],
+    ['Gross profit', '=B3-B4', '=C3-C4', '=D3-D4', '=E3-E4'],
+    ['Overheads', 120000, 125000, 130000, 135000],
+    ['EBITDA', '=B5-B6', '=C5-C6', '=D5-D6', '=E5-E6'],
+    ['Margin %', '=B7/B3', '=C7/C3', '=D7/D3', '=E7/E3'],
+    ['', '', '', '', ''],
+    ['Full year total', '', '', '', ''],
+    ['Revenue', '=SUM(B3:E3)', '', '', ''],
+    ['EBITDA', '=SUM(B7:E7)', '', '', ''],
+    ['Avg margin', '=AVERAGE(B8:E8)', '', '', ''],
+  ];
+  createSheetObject(cf, 'Project Cash Flow', 800, 50, 560, 360);
+  toast('Demo data loaded — try editing the yellow input cells');
+}
+
+// ════════════════════════════════════════════════════════
+//  HELPERS
+// ════════════════════════════════════════════════════════
+function colName(c) {
+  let s = ''; c++;
+  while (c > 0) { s = String.fromCharCode(64 + (c % 26 || 26)) + s; c = Math.floor((c-1)/26); }
+  return s;
+}
+function escHtml(s) {
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+// ════════════════════════════════════════════════════════
+//  UI CONTROLS
+// ════════════════════════════════════════════════════════
+function toggleGrid() {
+  gridVisible = !gridVisible;
+  document.getElementById('wb-bg').classList.toggle('no-grid', !gridVisible);
+  document.getElementById('btn-grid').classList.toggle('active', gridVisible);
+}
+
+function togglePresentation() {
+  presentationMode = !presentationMode;
+  document.body.classList.toggle('presentation', presentationMode);
+  document.getElementById('btn-present').classList.toggle('active', presentationMode);
+  if (presentationMode) toast('Presentation mode — press F or click Present to exit');
+  resizeCanvas();
+}
+
+function hideImportZone() {
+  document.getElementById('import-zone').classList.remove('visible');
+}
+function showImportZone() {
+  if (sheetObjects.length === 0) document.getElementById('import-zone').classList.add('visible');
+}
+
+function toast(msg) {
+  const el = document.getElementById('toast');
+  el.textContent = msg;
+  el.classList.add('show');
+  setTimeout(() => el.classList.remove('show'), 3000);
+}
+
+function openModal() {
+  document.getElementById('modal-overlay').classList.add('open');
+}
+function closeModal() {
+  document.getElementById('modal-overlay').classList.remove('open');
+}
+document.getElementById('modal-overlay').addEventListener('click', e => {
+  if (e.target === e.currentTarget) closeModal();
+});
+
+// Click on empty whiteboard to deselect
+document.getElementById('canvas-area').addEventListener('pointerdown', e => {
+  if (e.target.id === 'wb-bg' || e.target.id === 'canvas-area') {
+    closeEditor();
+    selectObj(null);
+  }
+});
+
+// ════════════════════════════════════════════════════════
+//  COLUMN AUTO-FIT
+// ════════════════════════════════════════════════════════
+function measureText(text, fontSize) {
+  // Fast canvas-based text measurement
+  if (!measureText._ctx) {
+    const c = document.createElement('canvas');
+    measureText._ctx = c.getContext('2d');
+  }
+  measureText._ctx.font = (fontSize || 12) + 'px -apple-system,BlinkMacSystemFont,Segoe UI,system-ui,sans-serif';
+  return measureText._ctx.measureText(String(text)).width;
+}
+
+function autoFitCol(obj, c) {
+  let maxW = 50; // minimum
+  const ROWS = obj.grid.length;
+  // Measure header
+  maxW = Math.max(maxW, measureText(colName(c), 11) + 20);
+  // Measure each cell's display value
+  for (let r = 0; r < ROWS; r++) {
+    const raw = obj.grid[r][c];
+    let display = raw;
+    if (typeof raw === 'string' && raw.startsWith('=')) {
+      display = evalFormula(raw, obj.grid, ROWS, obj.grid[0].length);
+    }
+    if (typeof display === 'number') display = formatNumber(display, raw);
+    if (display === null || display === undefined) display = '';
+    const w = measureText(display, 12) + 18; // padding
+    if (w > maxW) maxW = w;
+  }
+  maxW = Math.min(maxW, 320); // cap at 320px
+  obj.colWidths[c] = Math.ceil(maxW);
+  // Apply to colgroup col element
+  const colEl = document.getElementById(obj.id + '_col_' + c);
+  if (colEl) colEl.style.width = obj.colWidths[c] + 'px';
+  // Also update th width
+  const table = document.getElementById(obj.id + '_table');
+  if (table) {
+    const ths = table.querySelectorAll('thead th.col-header');
+    if (ths[c]) ths[c].style.width = obj.colWidths[c] + 'px';
+  }
+}
+
+function autoFitAllCols(id) {
+  const obj = sheetObjects.find(o => o.id === id);
+  if (!obj) return;
+  const COLS = obj.grid[0] ? obj.grid[0].length : 0;
+  for (let c = 0; c < COLS; c++) autoFitCol(obj, c);
+  // Expand obj width to fit all columns
+  const totalW = 36 + obj.colWidths.reduce((a, b) => a + b, 0) + 4;
+  obj.w = Math.max(obj.w, Math.min(totalW + 20, window.innerWidth - obj.x - 20));
+  positionObj(obj);
+  toast('Columns auto-fitted');
+}
+
+// ════════════════════════════════════════════════════════
+//  EXPAND OBJECT
+// ════════════════════════════════════════════════════════
+function expandObj(id) {
+  const obj = sheetObjects.find(o => o.id === id);
+  if (!obj) return;
+  const area = document.getElementById('canvas-area');
+  const avW = area.clientWidth - obj.x - 20;
+  const avH = area.clientHeight - obj.y - 20;
+  // First press: expand to 80% of available space
+  // Second press: go back to auto size
+  const bigW = Math.round(avW * 0.85);
+  const bigH = Math.round(avH * 0.85);
+  if (obj.w < bigW - 40) {
+    obj._prevW = obj.w; obj._prevH = obj.h;
+    obj.w = bigW; obj.h = bigH;
+    toast('Expanded — press again to restore size');
+  } else if (obj._prevW) {
+    obj.w = obj._prevW; obj.h = obj._prevH;
+    delete obj._prevW; delete obj._prevH;
+    toast('Restored size');
+  } else {
+    obj.w = Math.min(obj.w + 200, bigW);
+    obj.h = Math.min(obj.h + 150, bigH);
+  }
+  positionObj(obj);
+}
+
+// ════════════════════════════════════════════════════════
+//  INSERT / DELETE ROWS AND COLUMNS
+// ════════════════════════════════════════════════════════
+let ctxState = null; // { obj, r, c }
+
+function openCtxMenu(x, y, obj, r, c) {
+  if (mode !== 'select') return;
+  ctxState = { obj, r, c };
+  const menu = document.getElementById('ctx-menu');
+
+  // Show/hide row vs col options
+  document.getElementById('ctx-insert-row-above').style.display = r !== null ? '' : 'none';
+  document.getElementById('ctx-insert-row-below').style.display = r !== null ? '' : 'none';
+  document.getElementById('ctx-delete-row').style.display = r !== null ? '' : 'none';
+  document.getElementById('ctx-insert-col-left').style.display = c !== null ? '' : 'none';
+  document.getElementById('ctx-insert-col-right').style.display = c !== null ? '' : 'none';
+  document.getElementById('ctx-delete-col').style.display = c !== null ? '' : 'none';
+
+  // Position menu, keep it on screen
+  const mw = 200, mh = 240;
+  const px = Math.min(x, window.innerWidth - mw - 10);
+  const py = Math.min(y, window.innerHeight - mh - 10);
+  menu.style.left = px + 'px';
+  menu.style.top  = py + 'px';
+  menu.classList.add('open');
+
+  setTimeout(() => document.addEventListener('pointerdown', closeCtxMenu, { once: true }), 10);
+}
+
+function closeCtxMenu() {
+  document.getElementById('ctx-menu').classList.remove('open');
+}
+
+function ctxAction(action) {
+  closeCtxMenu();
+  if (!ctxState) return;
+  const { obj, r, c } = ctxState;
+
+  if (action === 'insertRowAbove' && r !== null) {
+    obj.grid.splice(r, 0, Array(obj.grid[0].length).fill(''));
+    if (!obj.colWidths) obj.colWidths = Array(obj.grid[0].length).fill(100);
+  } else if (action === 'insertRowBelow' && r !== null) {
+    obj.grid.splice(r + 1, 0, Array(obj.grid[0].length).fill(''));
+  } else if (action === 'deleteRow' && r !== null && obj.grid.length > 1) {
+    obj.grid.splice(r, 1);
+  } else if (action === 'insertColLeft' && c !== null) {
+    obj.grid.forEach(row => row.splice(c, 0, ''));
+    obj.colWidths && obj.colWidths.splice(c, 0, 100);
+  } else if (action === 'insertColRight' && c !== null) {
+    obj.grid.forEach(row => row.splice(c + 1, 0, ''));
+    obj.colWidths && obj.colWidths.splice(c + 1, 0, 100);
+  } else if (action === 'deleteCol' && c !== null && obj.grid[0].length > 1) {
+    obj.grid.forEach(row => row.splice(c, 1));
+    obj.colWidths && obj.colWidths.splice(c, 1);
+  } else if (action === 'autoFitCol' && c !== null) {
+    autoFitCol(obj, c);
+    return;
+  } else if (action === 'autoFitAll') {
+    autoFitAllCols(obj.id);
+    return;
+  }
+
+  rebuildTable(obj);
+  toast(action.replace(/([A-Z])/g, ' $1').toLowerCase().trim());
+}
+
+// Initial mode
+setMode('select');
+</script>
+</body>
+</html>
