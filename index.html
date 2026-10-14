@@ -340,7 +340,6 @@ html,body{height:100%;overflow:hidden;font-family:-apple-system,BlinkMacSystemFo
   background:var(--surface);border:2px dashed var(--border2);
   border-radius:16px;padding:48px 40px;text-align:center;
   z-index:30;pointer-events:all;
-  /* position:relative needed for the close button */
 }
 #import-zone.visible{display:block}
 #import-zone h2{font-size:20px;font-weight:700;color:var(--text);margin-bottom:8px}
@@ -465,8 +464,8 @@ body.presentation #whiteboard-canvas{pointer-events:none!important}
   <canvas id="whiteboard-canvas"></canvas>
 
   <!-- Welcome / import zone (shown when no sheets exist) -->
-  <div id="import-zone" class="visible" onclick="event.stopPropagation()">
-    <button onclick="hideImportZone()" title="Close and use whiteboard" style="position:absolute;top:12px;right:12px;background:none;border:1px solid var(--border);border-radius:6px;padding:4px 10px;cursor:pointer;font-size:12px;color:var(--text2)">✕ Close</button>
+  <div id="import-zone" class="visible">
+    <button onclick="hideImportZone()" title="Close" style="position:absolute;top:12px;right:12px;background:none;border:1px solid #ccc;border-radius:6px;padding:4px 12px;cursor:pointer;font-size:13px;color:#666;z-index:99">✕</button>
     <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" style="margin:0 auto 16px;display:block;color:#16a34a"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="3" y1="15" x2="21" y2="15"/><line x1="9" y1="3" x2="9" y2="21"/></svg>
     <h2>Whiteboard + Calc</h2>
     <p>Import an Excel or CSV file to place it on the<br>whiteboard, or create a blank calculation table.</p>
@@ -475,7 +474,7 @@ body.presentation #whiteboard-canvas{pointer-events:none!important}
       <button class="btn" onclick="createBlankSheet();hideImportZone()">New blank table</button>
       <button class="btn" onclick="createDemoSheet();hideImportZone()">Load demo data</button>
     </div>
-    <p style="margin-top:16px;font-size:11px;color:var(--text3)">Or drag and drop an Excel file anywhere on this page · or click outside to dismiss</p>
+    <p style="margin-top:16px;font-size:11px;color:var(--text3)">Or drag and drop an Excel file anywhere · press Esc to close</p>
   </div>
 </div>
 
@@ -2791,14 +2790,17 @@ document.getElementById('modal-overlay').addEventListener('click', e => {
   if (e.target === e.currentTarget) closeModal();
 });
 
-// Click on empty whiteboard to deselect and dismiss welcome screen
+// Click anywhere on canvas area to deselect and dismiss welcome screen
 document.getElementById('canvas-area').addEventListener('pointerdown', e => {
-  if (e.target.id === 'wb-bg' || e.target.id === 'canvas-area' || e.target.id === 'whiteboard-canvas') {
-    closeEditor();
-    selectObj(null);
-    // Dismiss welcome screen on click outside
-    const iz = document.getElementById('import-zone');
-    if (iz && iz.classList.contains('visible')) hideImportZone();
+  closeEditor();
+  selectObj(null);
+  hideImportZone();
+});
+
+// Also dismiss on Escape key
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape') {
+    hideImportZone();
   }
 });
 
